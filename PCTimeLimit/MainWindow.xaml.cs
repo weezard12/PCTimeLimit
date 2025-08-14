@@ -32,7 +32,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 		CompositionTarget_Rendering();
 		UpdateUi();
-	}
+
+        PreventClosing();
+    }
 
 	private void UpdateUi()
 	{
@@ -76,6 +78,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	{
 		MessageBox.Show(this, "Time is up!", "PC Time Limit", MessageBoxButton.OK, MessageBoxImage.Stop);
 	}
+
+    private void PreventClosing()
+    {
+        this.Closing += (s, e) =>
+        {
+            e.Cancel = true;
+        };
+        this.Loaded += (s, e) =>
+        {
+            this.Activate();
+            this.Focus();
+        };
+    }
 }
 
 public sealed class AppStorage
