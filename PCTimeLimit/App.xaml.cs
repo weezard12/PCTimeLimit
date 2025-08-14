@@ -1,14 +1,9 @@
-﻿using System.Configuration;
-using System.Data;
 using System.Windows;
 
-namespace PCTimeLimit
-{
-    /// <summary>
-    /// Interaction logic for App.xaml
-    /// </summary>
-    public partial class App : Application
-    {
-    }
+namespace PCTimeLimit;
 
+public partial class App : Application
+{
 }
+
+
