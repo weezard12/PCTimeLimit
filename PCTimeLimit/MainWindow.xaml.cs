@@ -111,7 +111,7 @@ public sealed class AppSettings
 {
 	public TimeSpan DailyLimit { get; set; } = TimeSpan.FromHours(1);
 	public string Password { get; set; } = "";
-	public DateTime DateUtc { get; set; } = DateTime.UtcNow.Date;
+	public DateTime DateUtc { get; set; } = DateTime.Today;
 	public TimeSpan RemainingForDate { get; set; } = TimeSpan.FromHours(1);
 }
 
@@ -174,6 +174,8 @@ public sealed class TimeManager
 
 	public void TickOneSecond()
 	{
+		// Ensure daily reset at local midnight; this also handles the case when the PC was off
+		// because we compare the stored date against today's date on every tick and on Load().
 		EnsureDate();
 		if (_settings.RemainingForDate <= TimeSpan.Zero)
 		{
@@ -193,7 +195,7 @@ public sealed class TimeManager
 
 	private void EnsureDate(bool resetToDailyLimit = false)
 	{
-		var today = DateTime.UtcNow.Date;
+		var today = DateTime.Today;
 		if (_settings.DateUtc != today)
 		{
 			_settings.DateUtc = today;
