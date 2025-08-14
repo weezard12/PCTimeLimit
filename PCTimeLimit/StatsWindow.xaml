@@ -1,0 +1,33 @@
+<Window x:Class="PCTimeLimit.StatsWindow"
+		xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+		xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+		Title="PC Time Limit - Usage Statistics" Height="420" Width="640" WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
+	<Grid Margin="12">
+		<Grid.RowDefinitions>
+			<RowDefinition Height="Auto" />
+			<RowDefinition Height="*" />
+			<RowDefinition Height="Auto" />
+		</Grid.RowDefinitions>
+
+		<StackPanel Orientation="Horizontal">
+			<TextBlock Text="Date:" VerticalAlignment="Center" Margin="0,0,8,0" />
+			<DatePicker x:Name="DatePicker" SelectedDateChanged="OnDateChanged" Width="160"/>
+			<Button Content="Today" Click="OnTodayClick" Margin="8,0,0,0" />
+		</StackPanel>
+
+		<ListView x:Name="UsageList" Grid.Row="1">
+			<ListView.View>
+				<GridView>
+					<GridViewColumn Header="Application" DisplayMemberBinding="{Binding App}" Width="360"/>
+					<GridViewColumn Header="Time" DisplayMemberBinding="{Binding Time}" Width="200"/>
+				</GridView>
+			</ListView.View>
+		</ListView>
+
+		<StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+			<Button Content="Close" Width="80" Click="OnCloseClick" />
+		</StackPanel>
+	</Grid>
+</Window>
+
+

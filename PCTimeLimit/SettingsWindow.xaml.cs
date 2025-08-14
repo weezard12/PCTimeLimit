@@ -6,11 +6,13 @@ namespace PCTimeLimit;
 public partial class SettingsWindow : Window
 {
 	private readonly TimeManager _timeManager;
+	private readonly UsageTracker _usageTracker;
 
-	public SettingsWindow(TimeManager timeManager)
+	public SettingsWindow(TimeManager timeManager, UsageTracker usageTracker)
 	{
 		InitializeComponent();
 		_timeManager = timeManager;
+		_usageTracker = usageTracker;
 		LoadCurrentValues();
 	}
 
@@ -19,6 +21,7 @@ public partial class SettingsWindow : Window
 		var limit = _timeManager is null ? TimeSpan.FromHours(1) : _timeManager.DailyLimit;
 		HoursBox.Text = Math.Max(0, (int)limit.TotalHours).ToString();
 		MinutesBox.Text = limit.Minutes.ToString();
+		PasswordBox.Password = _timeManager.GetPassword();
 	}
 
 	private void OnSaveClick(object sender, RoutedEventArgs e)
@@ -30,13 +33,24 @@ public partial class SettingsWindow : Window
 		var newLimit = TimeSpan.FromHours(hours) + TimeSpan.FromMinutes(minutes);
 		_timeManager.UpdateDailyLimit(newLimit);
 
-		_timeManager.UpdatePassword(PasswordBox.Password ?? string.Empty);
+		var newPassword = (PasswordBox.Password ?? string.Empty).Trim();
+		if (!string.IsNullOrWhiteSpace(newPassword))
+		{
+			_timeManager.UpdatePassword(newPassword);
+		}
 		MessageBox.Show(this, "Saved.", "PC Time Limit", MessageBoxButton.OK, MessageBoxImage.Information);
 	}
 
 	private void OnCloseClick(object sender, RoutedEventArgs e)
 	{
 		Close();
+	}
+
+	private void OnOpenStatsClick(object sender, RoutedEventArgs e)
+	{
+		var statsWindow = new StatsWindow(_usageTracker);
+		statsWindow.Owner = this;
+		statsWindow.ShowDialog();
 	}
 }
 

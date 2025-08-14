@@ -7,6 +7,8 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace PCTimeLimit;
 
@@ -14,6 +16,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 {
 	private readonly DispatcherTimer _uiTimer;
 	private readonly TimeManager _timeManager;
+	private readonly UsageTracker _usageTracker;
 
 	public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -22,6 +25,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		InitializeComponent();
 		_timeManager = new TimeManager();
 		_timeManager.Load();
+
+		_usageTracker = new UsageTracker();
+		_usageTracker.Load();
+		_usageTracker.Start();
 
 		_uiTimer = new DispatcherTimer
 		{
@@ -33,7 +40,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		CompositionTarget_Rendering();
 		UpdateUi();
 
-        PreventClosing();
+        //PreventClosing();
     }
 
 	private void UpdateUi()
@@ -46,7 +53,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		var pwd = PasswordBox.Password ?? string.Empty;
 		if (_timeManager.VerifyPassword(pwd))
 		{
-			var cp = new SettingsWindow(_timeManager);
+			var cp = new SettingsWindow(_timeManager, _usageTracker);
 			cp.Owner = this;
 			cp.ShowDialog();
 			UpdateUi();
@@ -97,6 +104,7 @@ public sealed class AppStorage
 {
 	public static string AppFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PCTimeLimit");
 	public static string SettingsFilePath => Path.Combine(AppFolder, "settings.json");
+	public static string UsageFilePath => Path.Combine(AppFolder, "usage.json");
 
 	public static void EnsureFolder()
 	{
@@ -113,6 +121,100 @@ public sealed class AppSettings
 	public string Password { get; set; } = "";
 	public DateTime DateUtc { get; set; } = DateTime.Today;
 	public TimeSpan RemainingForDate { get; set; } = TimeSpan.FromHours(1);
+}
+
+public sealed class UsageTracker
+{
+	private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMinutes(1) };
+	private UsageData _data = new();
+
+	public event Action<string>? UsageUpdated; // arg: dateKey (yyyy-MM-dd)
+
+	public void Start()
+	{
+		_timer.Tick += (_, _) => Sample();
+		_timer.Start();
+	}
+
+	public void Load()
+	{
+		AppStorage.EnsureFolder();
+		if (File.Exists(AppStorage.UsageFilePath))
+		{
+			try
+			{
+				var json = File.ReadAllText(AppStorage.UsageFilePath);
+				var loaded = JsonSerializer.Deserialize<UsageData>(json);
+				if (loaded != null)
+				{
+					_data = loaded;
+				}
+			}
+			catch { }
+		}
+	}
+
+	public void Save()
+	{
+		AppStorage.EnsureFolder();
+		var json = JsonSerializer.Serialize(_data, new JsonSerializerOptions { WriteIndented = true });
+		File.WriteAllText(AppStorage.UsageFilePath, json);
+	}
+
+	public IReadOnlyDictionary<string, TimeSpan> GetUsageForDate(DateTime date)
+	{
+		var key = date.Date.ToString("yyyy-MM-dd");
+		if (_data.Days.TryGetValue(key, out var perApp))
+		{
+			return perApp.ToDictionary(kv => kv.Key, kv => TimeSpan.FromMinutes(kv.Value));
+		}
+		return new Dictionary<string, TimeSpan>();
+	}
+
+	private void Sample()
+	{
+		if (TimeManager.IsWorkstationLocked()) return;
+		var appId = GetForegroundAppIdentifier();
+		if (string.IsNullOrWhiteSpace(appId)) return;
+		if (string.Equals(appId, "Program Manager", StringComparison.OrdinalIgnoreCase)) return;
+
+		var dayKey = DateTime.Today.ToString("yyyy-MM-dd");
+		if (!_data.Days.TryGetValue(dayKey, out var perApp))
+		{
+			perApp = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+			_data.Days[dayKey] = perApp;
+		}
+		perApp.TryGetValue(appId, out var minutes);
+		perApp[appId] = minutes + 1; // add one minute sample
+		Save();
+		UsageUpdated?.Invoke(dayKey);
+	}
+
+	private static string GetForegroundAppIdentifier()
+	{
+		var hwnd = TimeManager.GetForegroundWindow();
+		if (hwnd == IntPtr.Zero) return string.Empty;
+		uint pid;
+		GetWindowThreadProcessId(hwnd, out pid);
+		try
+		{
+			using var proc = Process.GetProcessById((int)pid);
+			var name = proc.ProcessName;
+			var title = TimeManager.GetForegroundWindowTitle();
+			return string.IsNullOrWhiteSpace(title) ? name : $"{name} - {title}";
+		}
+		catch
+		{
+			return string.Empty;
+		}
+	}
+
+	[DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+}
+
+public sealed class UsageData
+{
+	public Dictionary<string, Dictionary<string, int>> Days { get; set; } = new(); // dateKey -> appId -> minutes
 }
 
 public sealed class TimeManager
@@ -170,6 +272,11 @@ public sealed class TimeManager
 	{
 		_settings.Password = newPassword ?? string.Empty;
 		Save();
+	}
+
+	public string GetPassword()
+	{
+		return _settings.Password ?? string.Empty;
 	}
 
 	public void TickOneSecond()
@@ -235,7 +342,7 @@ public sealed class TimeManager
 		return true;
 	}
 
-	[DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
 	[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)] private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
 	[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)] private static extern int GetWindowTextLength(IntPtr hWnd);
 	[DllImport("wtsapi32.dll", SetLastError = true)] private static extern bool WTSQuerySessionInformation(IntPtr hServer, int sessionId, WTS_INFO_CLASS wtsInfoClass, out IntPtr ppBuffer, out int pBytesReturned);
@@ -247,7 +354,7 @@ public sealed class TimeManager
 		WTSConnectState = 8
 	}
 
-	private static string GetForegroundWindowTitle()
+	internal static string GetForegroundWindowTitle()
 	{
 		var handle = GetForegroundWindow();
 		if (handle == IntPtr.Zero) return string.Empty;
@@ -257,7 +364,7 @@ public sealed class TimeManager
 		return sb.ToString();
 	}
 
-	private static bool IsWorkstationLocked()
+    public static bool IsWorkstationLocked()
 	{
 		// Simpler heuristic: when there's no foreground window title, consider locked or secure desktop
 		var title = GetForegroundWindowTitle();
