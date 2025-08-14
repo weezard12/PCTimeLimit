@@ -9,6 +9,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Win32;
 
 namespace PCTimeLimit;
 
@@ -40,7 +41,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		CompositionTarget_Rendering();
 		UpdateUi();
 
-        //PreventClosing();
+		PreventClosing();
+		SetRunOnStartup(true);
     }
 
 	private void UpdateUi()
@@ -84,6 +86,51 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private void ShowLockout()
 	{
 		MessageBox.Show(this, "Time is up!", "PC Time Limit", MessageBoxButton.OK, MessageBoxImage.Stop);
+	}
+
+	public void SetRunOnStartup(bool enable)
+	{
+		const string runKeyPath = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+		using var key = Registry.CurrentUser.OpenSubKey(runKeyPath, writable: true) ?? Registry.CurrentUser.CreateSubKey(runKeyPath, true);
+		if (key is null) return;
+
+		const string valueName = "PCTimeLimit";
+		if (enable)
+		{
+			var exePath = GetExecutablePath();
+			if (!string.IsNullOrWhiteSpace(exePath))
+			{
+				key.SetValue(valueName, $"\"{exePath}\"");
+			}
+		}
+		else
+		{
+			key.DeleteValue(valueName, false);
+		}
+	}
+
+	public bool IsRunOnStartupEnabled()
+	{
+		const string runKeyPath = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+		using var key = Registry.CurrentUser.OpenSubKey(runKeyPath, writable: false);
+		if (key is null) return false;
+		var value = key.GetValue("PCTimeLimit") as string;
+		return !string.IsNullOrWhiteSpace(value);
+	}
+
+	private static string GetExecutablePath()
+	{
+		try
+		{
+			return Process.GetCurrentProcess().MainModule?.FileName
+					?? System.Reflection.Assembly.GetEntryAssembly()?.Location
+					?? Environment.ProcessPath
+					?? string.Empty;
+		}
+		catch
+		{
+			return System.Reflection.Assembly.GetEntryAssembly()?.Location ?? string.Empty;
+		}
 	}
 
     private void PreventClosing()
