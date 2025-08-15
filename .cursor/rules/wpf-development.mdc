@@ -1,0 +1,36 @@
+# WPF Development Guidelines
+
+## XAML Structure
+- Use consistent naming conventions for UI elements
+- Implement proper data binding for MVVM pattern
+- Use resource dictionaries for consistent styling
+- Ensure accessibility with proper labels and descriptions
+
+## Code-Behind Patterns
+- Keep code-behind minimal, delegate logic to services
+- Use async/await for network operations
+- Implement proper error handling and user feedback
+- Use INotifyPropertyChanged for data binding updates
+
+## UI/UX Guidelines
+- Design child-friendly interface for Time Limit App
+- Create professional, easy-to-use interface for Admin App
+- Use clear visual indicators for time remaining
+- Implement responsive design for different screen sizes
+- Provide clear feedback for all user actions
+
+## Security Considerations
+- Implement proper authentication for Admin App
+- Secure communication between components
+- Prevent unauthorized access to time limit settings
+- Log all administrative actions for audit purposes
+
+## File Organization
+- Separate UI logic from business logic
+- Use services for external communication
+- Implement proper dependency injection
+- Follow MVVM pattern for maintainable code
+description:
+globs:
+alwaysApply: false
+---

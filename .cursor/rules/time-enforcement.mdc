@@ -1,0 +1,47 @@
+# Time Limit Enforcement Guidelines
+
+## Core Functionality
+- Implement precise time tracking for PC usage
+- Enforce daily, weekly, and monthly time limits
+- Track active vs. idle time separately
+- Provide real-time countdown displays
+
+## Enforcement Mechanisms
+- **Child PC**: Automatic shutdown/sleep when limits reached
+- **Parent PC**: Real-time monitoring and override capabilities
+- **Server**: Centralized limit management and enforcement
+- Implement tamper-resistant time tracking
+
+## Time Tracking Features
+- Monitor application-specific usage
+- Track web browsing time separately
+- Implement idle time detection
+- Log all time-related activities
+
+## User Interface Requirements
+- **Child App**: Simple, clear display of remaining time
+- **Admin App**: Comprehensive time management dashboard
+- **Server**: Administrative interface for time limit configuration
+- Real-time notifications and alerts
+
+## Data Management
+- Store time limit configurations on server
+- Sync settings across all connected devices
+- Maintain usage history for reporting
+- Implement data export capabilities
+
+## Monitoring and Reporting
+- Real-time usage statistics
+- Historical usage reports
+- Exception and override logging
+- Automated alerts for limit violations
+
+## Security and Anti-Bypass
+- Prevent time manipulation through system clock changes
+- Secure local storage of time tracking data
+- Implement process monitoring to prevent circumvention
+- Regular integrity checks and validation
+description:
+globs:
+alwaysApply: false
+---

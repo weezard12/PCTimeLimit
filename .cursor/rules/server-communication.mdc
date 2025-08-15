@@ -1,0 +1,45 @@
+# Server and Communication Guidelines
+
+## Server Architecture
+- **Location**: [PCTimeLimitServer/](mdc:PCTimeLimitServer/)
+- Implement robust error handling and logging
+- Use async/await for all I/O operations
+- Implement proper connection pooling
+- Ensure 24/7 reliability with automatic restart capabilities
+
+## TCP Communication Protocol
+- **Reference**: [MessageProtocol.cs](mdc:PCTimeLimitAdmin/Shared/MessageProtocol.cs)
+- Use JSON for message serialization
+- Implement message validation and sanitization
+- Handle connection drops gracefully
+- Implement heartbeat mechanism for connection monitoring
+
+## Account Management
+- **Reference**: [AccountManager.cs](mdc:PCTimeLimitServer/AccountManager.cs)
+- Secure storage of user credentials
+- Role-based access control (Parent/Child)
+- Audit logging for all account operations
+- Implement account recovery mechanisms
+
+## Data Persistence
+- Store time limit configurations securely
+- Track usage statistics and history
+- Implement data backup and recovery
+- Use encryption for sensitive data
+
+## Security Best Practices
+- Implement SSL/TLS for encrypted communication
+- Validate all incoming messages
+- Rate limiting to prevent abuse
+- Regular security audits and updates
+- Secure API endpoints with proper authentication
+
+## Testing and Debugging
+- Use [LocalTest.cs](mdc:PCTimeLimitServer/LocalTest.cs) for development testing
+- Implement comprehensive logging
+- Create test clients for protocol validation
+- Monitor server performance and resource usage
+description:
+globs:
+alwaysApply: false
+---

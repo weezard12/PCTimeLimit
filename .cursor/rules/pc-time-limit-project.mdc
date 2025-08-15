@@ -1,0 +1,51 @@
+# PC Time Limit Application - Project Overview
+
+This is a parental control application that allows parents to limit PC time for their children. The application consists of three main components:
+
+## Architecture Overview
+
+### 1. Time Limit App (Child PC)
+- **Location**: [PCTimeLimit/](mdc:PCTimeLimit/)
+- **Type**: WPF application installed on child's PC
+- **Purpose**: Enforces time limits, tracks usage, communicates with server
+- **Key Files**:
+  - [MainWindow.xaml](mdc:PCTimeLimit/MainWindow.xaml) - Main UI for child
+  - [SettingsWindow.xaml](mdc:PCTimeLimit/SettingsWindow.xaml) - Child settings
+  - [StatsWindow.xaml](mdc:PCTimeLimit/StatsWindow.xaml) - Usage statistics
+
+### 2. Admin Time Limit App (Parent PC)
+- **Location**: [PCTimeLimitAdmin/](mdc:PCTimeLimitAdmin/)
+- **Type**: WPF application installed on parent's PC
+- **Purpose**: Configure time limits, monitor usage, manage child accounts
+- **Key Files**:
+  - [MainWindow.xaml](mdc:PCTimeLimitAdmin/MainWindow.xaml) - Parent control panel
+  - [LoginWindow.xaml](mdc:PCTimeLimitAdmin/LoginWindow.xaml) - Parent authentication
+  - [Services/TcpClientService.cs](mdc:PCTimeLimitAdmin/Services/TcpClientService.cs) - Server communication
+  - [Shared/MessageProtocol.cs](mdc:PCTimeLimitAdmin/Shared/MessageProtocol.cs) - Communication protocol
+
+### 3. Server (24/7 Running PC)
+- **Location**: [PCTimeLimitServer/](mdc:PCTimeLimitServer/)
+- **Type**: Custom server application
+- **Purpose**: Handle connections between parent and child PCs, manage accounts
+- **Key Files**:
+  - [Program.cs](mdc:PCTimeLimitServer/Program.cs) - Server entry point
+  - [AccountManager.cs](mdc:PCTimeLimitServer/AccountManager.cs) - User account management
+
+## Communication Flow
+1. Parent configures time limits via Admin App
+2. Admin App sends configuration to Server via TCP
+3. Server stores configuration and manages accounts
+4. Child PC connects to Server to receive time limit settings
+5. Child PC enforces limits locally and reports usage back to Server
+6. Parent can monitor usage through Admin App
+
+## Development Guidelines
+- Use WPF for desktop applications
+- Implement secure TCP communication between components
+- Store configuration and usage data on the server
+- Ensure child PC cannot bypass time limits
+- Provide real-time monitoring capabilities for parents
+description:
+globs:
+alwaysApply: false
+---
