@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using PCTimeLimitAdmin.Services;
 using System.Collections.Generic;
 using System.Linq;
@@ -145,14 +145,41 @@ public partial class MainWindow : Window
             var response = await _tcpClient.SendMessageAsync(request);
             if (response?.Success == true && response.Data != null)
             {
-                // Parse computers from response
-                var computersJson = response.Data.ToString();
-                var computers = System.Text.Json.JsonSerializer.Deserialize<List<ComputerInfo>>(computersJson);
-                if (computers != null)
+                // Data shape: { Success: true, Computers: [...] }
+                try
                 {
-                    _computers = computers;
-                    ComputersDataGrid.ItemsSource = _computers;
-                    StatusText.Text = $"Loaded {_computers.Count} computers";
+                    if (response.Data is System.Text.Json.JsonElement dataEl)
+                    {
+                        if (dataEl.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                            dataEl.TryGetProperty("Computers", out var compsEl))
+                        {
+                            var computers = System.Text.Json.JsonSerializer.Deserialize<List<ComputerInfo>>(compsEl.GetRawText());
+                            if (computers != null)
+                            {
+                                _computers = computers;
+                                ComputersDataGrid.ItemsSource = _computers;
+                                ComputersDataGrid.Items.Refresh();
+                                StatusText.Text = $"Loaded {_computers.Count} computers";
+                                return;
+                            }
+                        }
+                    }
+                    // Fallback: try direct list if server schema differs
+                    var fallbackJson = response.Data.ToString();
+                    var fallback = System.Text.Json.JsonSerializer.Deserialize<List<ComputerInfo>>(fallbackJson);
+                    if (fallback != null)
+                    {
+                        _computers = fallback;
+                        ComputersDataGrid.ItemsSource = _computers;
+                        ComputersDataGrid.Items.Refresh();
+                        StatusText.Text = $"Loaded {_computers.Count} computers";
+                        return;
+                    }
+                    StatusText.Text = "No computers found in response.";
+                }
+                catch (Exception ex)
+                {
+                    StatusText.Text = $"Failed to parse computers: {ex.Message}";
                 }
             }
             else
@@ -179,11 +206,13 @@ public partial class MainWindow : Window
             MinutesTextBox.Text = timeLimit.Minutes.ToString();
             
             UpdateTimeLimitButton.IsEnabled = true;
+            ResetTimerButton.IsEnabled = true;
         }
         else
         {
             SelectedComputerText.Text = "None";
             UpdateTimeLimitButton.IsEnabled = false;
+            ResetTimerButton.IsEnabled = false;
         }
     }
     
@@ -275,6 +304,46 @@ public partial class MainWindow : Window
         ConnectionStatusText.Text = status;
         ConnectionStatusText.Foreground = isConnected ? System.Windows.Media.Brushes.Green : System.Windows.Media.Brushes.Gray;
     }
+
+    private async void ResetTimerButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComputer == null || _tcpClient?.IsConnected != true || string.IsNullOrEmpty(_loggedInUsername)) return;
+        try
+        {
+            var request = new
+            {
+                Type = 8, // ResetComputerTimer
+                Data = new
+                {
+                    ComputerId = _selectedComputer.ComputerId,
+                    AdminUsername = _loggedInUsername
+                }
+            };
+
+            ResetTimerButton.IsEnabled = false;
+            var response = await _tcpClient.SendMessageAsync(request);
+            if (response?.Success == true)
+            {
+                StatusText.Text = $"Reset queued for {_selectedComputer.ComputerName}.";
+                MessageBox.Show($"Reset queued for {_selectedComputer.ComputerName}. If the PC is online, it will apply shortly.", "Reset Queued", MessageBoxButton.OK, MessageBoxImage.Information);
+                await LoadComputersAsync();
+            }
+            else
+            {
+                StatusText.Text = $"Failed to queue reset: {response?.ErrorMessage}";
+                MessageBox.Show($"Failed to queue reset: {response?.ErrorMessage}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Error sending reset: {ex.Message}";
+            MessageBox.Show($"Error sending reset: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            ResetTimerButton.IsEnabled = _selectedComputer != null;
+        }
+    }
 }
 
 public class ComputerInfo
@@ -286,4 +355,5 @@ public class ComputerInfo
     public DateTime RegisteredAt { get; set; }
     public DateTime LastSeen { get; set; }
     public bool IsOnline { get; set; } = false;
+    public bool PendingReset { get; set; } = false;
 }

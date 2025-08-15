@@ -178,6 +178,12 @@ class Program
                 case MessageType.GetComputersForAdmin:
                     return await HandleGetComputersForAdminAsync(request, connection);
                     
+                case MessageType.ResetComputerTimer:
+                    return await HandleResetComputerTimerAsync(request, connection);
+                
+                case MessageType.AcknowledgeReset:
+                    return await HandleAcknowledgeResetAsync(request, connection);
+                
                 default:
                     return CreateErrorResponse($"Unknown message type: {request.Type}");
             }
@@ -306,6 +312,46 @@ class Program
         Console.WriteLine($"Retrieved {computers.Count} computers for admin {data.AdminUsername}");
         return CreateResponse(MessageType.GetComputersForAdmin, new { Success = true, Computers = computers }, true);
     }
+
+    private static async Task<string> HandleResetComputerTimerAsync(MessageRequest request, ClientConnection connection)
+    {
+        var data = JsonSerializer.Deserialize<ResetComputerTimerData>(request.Data?.ToString() ?? "{}");
+        if (data == null || string.IsNullOrWhiteSpace(data.ComputerId) || string.IsNullOrWhiteSpace(data.AdminUsername))
+        {
+            return CreateErrorResponse("Computer ID and admin username are required");
+        }
+
+        var result = _accountManager.QueueResetTimer(data.ComputerId, data.AdminUsername);
+        if (result.Success)
+        {
+            Console.WriteLine($"Queued reset for computer {data.ComputerId} by admin {data.AdminUsername}");
+            return CreateResponse(MessageType.ResetComputerTimer, new { Success = true, Message = "Reset queued", Computer = result.Data }, true);
+        }
+        else
+        {
+            return CreateResponse(MessageType.ResetComputerTimer, new { Success = false, Message = result.ErrorMessage }, false);
+        }
+    }
+
+    private static async Task<string> HandleAcknowledgeResetAsync(MessageRequest request, ClientConnection connection)
+    {
+        var data = JsonSerializer.Deserialize<AcknowledgeResetData>(request.Data?.ToString() ?? "{}");
+        if (data == null || string.IsNullOrWhiteSpace(data.ComputerId))
+        {
+            return CreateErrorResponse("Computer ID is required");
+        }
+
+        var result = _accountManager.AcknowledgeReset(data.ComputerId);
+        if (result.Success)
+        {
+            Console.WriteLine($"Reset acknowledged by computer {data.ComputerId}");
+            return CreateResponse(MessageType.AcknowledgeReset, new { Success = true, Message = "Reset acknowledged", Computer = result.Data }, true);
+        }
+        else
+        {
+            return CreateResponse(MessageType.AcknowledgeReset, new { Success = false, Message = result.ErrorMessage }, false);
+        }
+    }
     
     private static string CreateResponse(MessageType type, object data)
     {
@@ -350,6 +396,8 @@ public enum MessageType
     UpdateComputerStatus = 5,
     SetComputerTimeLimit = 6,
     GetComputersForAdmin = 7,
+    ResetComputerTimer = 8,
+    AcknowledgeReset = 9,
     Error = 99
 }
 
@@ -403,6 +451,17 @@ public class SetComputerTimeLimitData
 public class GetComputersForAdminData
 {
     public string AdminUsername { get; set; } = "";
+}
+
+public class ResetComputerTimerData
+{
+    public string ComputerId { get; set; } = "";
+    public string AdminUsername { get; set; } = "";
+}
+
+public class AcknowledgeResetData
+{
+    public string ComputerId { get; set; } = "";
 }
 
 public class ClientConnection

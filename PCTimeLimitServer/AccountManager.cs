@@ -259,6 +259,48 @@ public class AccountManager
         return new ComputerResult { Success = false, ErrorMessage = "Computer not found" };
     }
 
+    public ComputerResult QueueResetTimer(string computerId, string adminUsername)
+    {
+        if (!_accounts.TryGetValue(adminUsername, out var account) || !account.IsAdmin)
+        {
+            return new ComputerResult { Success = false, ErrorMessage = "Invalid admin account" };
+        }
+
+        if (_computers.TryGetValue(computerId, out var computer))
+        {
+            if (!string.Equals(computer.AdminUsername, adminUsername, StringComparison.OrdinalIgnoreCase))
+            {
+                return new ComputerResult { Success = false, ErrorMessage = "You can only modify computers under your control" };
+            }
+
+            computer.PendingReset = true;
+            SaveComputers();
+            return new ComputerResult { Success = true, Data = computer };
+        }
+
+        return new ComputerResult { Success = false, ErrorMessage = "Computer not found" };
+    }
+
+    public ComputerResult AcknowledgeReset(string computerId)
+    {
+        if (_computers.TryGetValue(computerId, out var computer))
+        {
+            computer.PendingReset = false;
+            SaveComputers();
+            return new ComputerResult { Success = true, Data = computer };
+        }
+        return new ComputerResult { Success = false, ErrorMessage = "Computer not found" };
+    }
+
+    public ComputerResult GetComputerState(string computerId)
+    {
+        if (_computers.TryGetValue(computerId, out var computer))
+        {
+            return new ComputerResult { Success = true, Data = computer };
+        }
+        return new ComputerResult { Success = false, ErrorMessage = "Computer not found" };
+    }
+
     public ComputerResult SetComputerTimeLimit(string computerId, TimeSpan timeLimit, string adminUsername)
     {
         if (!_accounts.TryGetValue(adminUsername, out var account) || !account.IsAdmin)
@@ -366,6 +408,7 @@ public class ComputerInfo
     public DateTime RegisteredAt { get; set; }
     public DateTime LastSeen { get; set; }
     public bool IsOnline { get; set; } = false;
+    public bool PendingReset { get; set; } = false;
 }
 
 public class AccountResult

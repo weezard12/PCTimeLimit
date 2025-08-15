@@ -11,6 +11,8 @@ public enum MessageType
     UpdateComputerStatus = 5,
     SetComputerTimeLimit = 6,
     GetComputersForAdmin = 7,
+    ResetComputerTimer = 8,
+    AcknowledgeReset = 9,
     Error = 99
 }
 

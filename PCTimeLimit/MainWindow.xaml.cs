@@ -26,6 +26,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private string? _adminPassword;
 	private string? _computerId;
 	private ClientService? _clientService;
+	private TimeSpan? _serverDailyLimitPending;
+	private DispatcherTimer? _syncTimer;
+	private bool _syncInProgress;
 
 	public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -51,6 +54,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		
 		_timeManager = new TimeManager();
 		_timeManager.Load();
+		// If server provided a daily limit during registration, apply it now
+		if (_serverDailyLimitPending.HasValue)
+		{
+			_timeManager.UpdateDailyLimit(_serverDailyLimitPending.Value);
+			_serverDailyLimitPending = null;
+		}
 
 		_usageTracker = new UsageTracker();
 		_usageTracker.Load();
@@ -68,6 +77,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 		PreventClosing();
 		SetRunOnStartup(true);
+		// Start periodic sync with server to reflect admin changes
+		StartSyncTimer();
     }
 
 	private async void InitializeApp(string adminUsername, string adminPassword)
@@ -82,14 +93,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 			var clientService = new ClientService();
 			if (await clientService.ConnectAsync())
 			{
-				var registered = await clientService.RegisterComputerAsync(computerId, computerName, adminUsername, adminPassword);
-				if (registered)
+				var regResult = await clientService.RegisterComputerAsync(computerId, computerName, adminUsername, adminPassword);
+				if (regResult.Success)
 				{
 					// Store admin credentials for future use
 					_adminUsername = adminUsername;
 					_adminPassword = adminPassword;
 					_computerId = computerId;
 					_clientService = clientService;
+					// Capture server-provided daily limit (applied after TimeManager is created)
+					_serverDailyLimitPending = regResult.DailyLimit;
 					
 					// Start periodic status updates
 					StartStatusUpdates();
@@ -129,6 +142,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		statusTimer.Start();
 	}
 
+	private void StartSyncTimer()
+	{
+		_syncTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+		_syncTimer.Tick += async (_, _) =>
+		{
+			await SyncDailyLimitFromServerAsync("poll");
+		};
+		_syncTimer.Start();
+		// Also do an initial sync shortly after startup
+		_ = SyncDailyLimitFromServerAsync("startup");
+	}
+
 	private void UpdateUi()
 	{
 		RemainingTimeText.Text = _timeManager.Remaining.ToString();
@@ -162,6 +187,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 				_timeManager.Remaining = TimeSpan.Zero;
 				UpdateUi();
 				ShowLockout();
+				// When time is over, check if admin updated the limit and apply
+				_ = SyncDailyLimitFromServerAsync("timerEnded");
 			}
 		};
 		timer.Start();
@@ -229,6 +256,35 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             this.Focus();
         };
     }
+
+    private async Task SyncDailyLimitFromServerAsync(string reason)
+    {
+        if (_syncInProgress) return;
+        if (_clientService?.IsConnected != true || string.IsNullOrWhiteSpace(_adminUsername) || string.IsNullOrWhiteSpace(_computerId)) return;
+        try
+        {
+            _syncInProgress = true;
+            var state = await _clientService.GetComputerStateAsync(_adminUsername!, _computerId!);
+            if (state != null)
+            {
+                if (state.DailyLimit.HasValue && state.DailyLimit.Value > TimeSpan.Zero && state.DailyLimit.Value != _timeManager.DailyLimit)
+                {
+                    _timeManager.UpdateDailyLimit(state.DailyLimit.Value);
+                    UpdateUi();
+                }
+                if (state.PendingReset)
+                {
+                    // Reset remaining to the daily limit immediately
+                    _timeManager.UpdateDailyLimit(_timeManager.DailyLimit);
+                    UpdateUi();
+                    // Acknowledge to server so it clears the queue
+                    _ = _clientService.AcknowledgeResetAsync(_computerId!);
+                }
+            }
+        }
+        catch { }
+        finally { _syncInProgress = false; }
+    }
 }
 
 public sealed class ClientService
@@ -255,9 +311,15 @@ public sealed class ClientService
         }
     }
     
-    public async Task<bool> RegisterComputerAsync(string computerId, string computerName, string adminUsername, string adminPassword)
+    public sealed class RegisterComputerResult
     {
-        if (!IsConnected) return false;
+        public bool Success { get; set; }
+        public TimeSpan DailyLimit { get; set; }
+    }
+
+    public async Task<RegisterComputerResult> RegisterComputerAsync(string computerId, string computerName, string adminUsername, string adminPassword)
+    {
+        if (!IsConnected) return new RegisterComputerResult { Success = false, DailyLimit = TimeSpan.Zero };
         
         try
         {
@@ -281,12 +343,42 @@ public sealed class ClientService
             var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
             var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
             
-            var responseObj = JsonSerializer.Deserialize<dynamic>(response);
-            return responseObj?.GetProperty("Success").GetBoolean() == true;
+            // Expected response schema from server:
+            // { Type, Success, Data: { Success, Message, Computer: { DailyTimeLimit: "hh:mm:ss", ... } } }
+            try
+            {
+                using var doc = JsonDocument.Parse(response);
+                var root = doc.RootElement;
+                var success = root.TryGetProperty("Success", out var topSuccess) && topSuccess.GetBoolean();
+                TimeSpan limit = TimeSpan.Zero;
+                if (root.TryGetProperty("Data", out var dataEl))
+                {
+                    if (dataEl.ValueKind == JsonValueKind.Object)
+                    {
+                        if (dataEl.TryGetProperty("Computer", out var compEl))
+                        {
+                            if (compEl.TryGetProperty("DailyTimeLimit", out var limitEl))
+                            {
+                                // TimeSpan serialized as string "hh:mm:ss"
+                                var s = limitEl.GetString();
+                                if (!string.IsNullOrWhiteSpace(s))
+                                {
+                                    TimeSpan.TryParse(s, out limit);
+                                }
+                            }
+                        }
+                    }
+                }
+                return new RegisterComputerResult { Success = success, DailyLimit = limit };
+            }
+            catch
+            {
+                return new RegisterComputerResult { Success = false, DailyLimit = TimeSpan.Zero };
+            }
         }
         catch
         {
-            return false;
+            return new RegisterComputerResult { Success = false, DailyLimit = TimeSpan.Zero };
         }
     }
     
@@ -311,6 +403,162 @@ public sealed class ClientService
             await _stream!.WriteAsync(data, 0, data.Length);
             
             return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+    
+    public async Task<TimeSpan?> GetDailyLimitAsync(string adminUsername, string computerId)
+    {
+        if (!IsConnected) return null;
+        try
+        {
+            var request = new
+            {
+                Type = 7, // GetComputersForAdmin
+                Data = new { AdminUsername = adminUsername }
+            };
+
+            var json = JsonSerializer.Serialize(request);
+            var data = Encoding.UTF8.GetBytes(json);
+            await _stream!.WriteAsync(data, 0, data.Length);
+
+            var buffer = new byte[2048];
+            var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
+            if (bytesRead <= 0) return null;
+            var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+
+            using var doc = JsonDocument.Parse(response);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("Success", out var ok) || !ok.GetBoolean()) return null;
+            if (!root.TryGetProperty("Data", out var dataEl)) return null;
+            if (dataEl.ValueKind != JsonValueKind.Object) return null;
+            if (!dataEl.TryGetProperty("Computers", out var compsEl)) return null;
+            if (compsEl.ValueKind != JsonValueKind.Array) return null;
+
+            foreach (var comp in compsEl.EnumerateArray())
+            {
+                var id = comp.TryGetProperty("ComputerId", out var idEl) ? idEl.GetString() : null;
+                if (!string.Equals(id, computerId, StringComparison.OrdinalIgnoreCase)) continue;
+
+                // DailyTimeLimit might be serialized as string or object; handle both
+                if (comp.TryGetProperty("DailyTimeLimit", out var limitEl))
+                {
+                    if (limitEl.ValueKind == JsonValueKind.String)
+                    {
+                        var s = limitEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(s) && TimeSpan.TryParse(s, out var ts))
+                            return ts;
+                    }
+                    else if (limitEl.ValueKind == JsonValueKind.Number)
+                    {
+                        // If serialized as ticks or minutes, attempt ticks first
+                        if (limitEl.TryGetInt64(out var ticks))
+                            return TimeSpan.FromTicks(ticks);
+                    }
+                }
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+    
+    public sealed class ComputerState
+    {
+        public TimeSpan? DailyLimit { get; set; }
+        public bool PendingReset { get; set; }
+    }
+
+    public async Task<ComputerState?> GetComputerStateAsync(string adminUsername, string computerId)
+    {
+        if (!IsConnected) return null;
+        try
+        {
+            var request = new
+            {
+                Type = 7, // GetComputersForAdmin
+                Data = new { AdminUsername = adminUsername }
+            };
+
+            var json = JsonSerializer.Serialize(request);
+            var data = Encoding.UTF8.GetBytes(json);
+            await _stream!.WriteAsync(data, 0, data.Length);
+
+            var buffer = new byte[4096];
+            var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
+            if (bytesRead <= 0) return null;
+            var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+
+            using var doc = JsonDocument.Parse(response);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("Success", out var ok) || !ok.GetBoolean()) return null;
+            if (!root.TryGetProperty("Data", out var dataEl)) return null;
+            if (dataEl.ValueKind != JsonValueKind.Object) return null;
+            if (!dataEl.TryGetProperty("Computers", out var compsEl)) return null;
+            if (compsEl.ValueKind != JsonValueKind.Array) return null;
+
+            foreach (var comp in compsEl.EnumerateArray())
+            {
+                var id = comp.TryGetProperty("ComputerId", out var idEl) ? idEl.GetString() : null;
+                if (!string.Equals(id, computerId, StringComparison.OrdinalIgnoreCase)) continue;
+
+                var state = new ComputerState();
+                if (comp.TryGetProperty("DailyTimeLimit", out var limitEl))
+                {
+                    if (limitEl.ValueKind == JsonValueKind.String)
+                    {
+                        var s = limitEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(s) && TimeSpan.TryParse(s, out var ts))
+                            state.DailyLimit = ts;
+                    }
+                    else if (limitEl.ValueKind == JsonValueKind.Number && limitEl.TryGetInt64(out var ticks))
+                    {
+                        state.DailyLimit = TimeSpan.FromTicks(ticks);
+                    }
+                }
+                if (comp.TryGetProperty("PendingReset", out var prEl) && prEl.ValueKind == JsonValueKind.True)
+                {
+                    state.PendingReset = true;
+                }
+                else if (comp.TryGetProperty("PendingReset", out prEl) && prEl.ValueKind == JsonValueKind.False)
+                {
+                    state.PendingReset = false;
+                }
+                return state;
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<bool> AcknowledgeResetAsync(string computerId)
+    {
+        if (!IsConnected) return false;
+        try
+        {
+            var request = new
+            {
+                Type = 9, // AcknowledgeReset
+                Data = new { ComputerId = computerId }
+            };
+            var json = JsonSerializer.Serialize(request);
+            var data = Encoding.UTF8.GetBytes(json);
+            await _stream!.WriteAsync(data, 0, data.Length);
+
+            // best-effort; no need to block on response, but try to read small
+            var buffer = new byte[256];
+            var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
+            return bytesRead > 0;
         }
         catch
         {
