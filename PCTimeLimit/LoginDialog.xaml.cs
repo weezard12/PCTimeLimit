@@ -3,6 +3,8 @@ using System.Net.Sockets;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace PCTimeLimit;
 
@@ -14,6 +16,8 @@ public partial class LoginDialog : Window
     
     private readonly string _serverAddress = "127.0.0.1";
     private readonly int _serverPort = 8888;
+    private const int ConnectionTimeoutMs = 5000;
+    private const int ReadTimeoutMs = 5000;
     
     public LoginDialog()
     {
@@ -24,6 +28,7 @@ public partial class LoginDialog : Window
     private void LoginDialog_Loaded(object sender, RoutedEventArgs e)
     {
         UsernameTextBox.Focus();
+        StatusTextBlock.Text = string.Empty;
     }
     
     private async void LoginButton_Click(object sender, RoutedEventArgs e)
@@ -33,12 +38,13 @@ public partial class LoginDialog : Window
         
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
         {
-            MessageBox.Show("Please enter both username and password.", "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            StatusTextBlock.Text = "Please enter both username and password.";
             return;
         }
         
         LoginButton.IsEnabled = false;
         LoginButton.Content = "Authenticating...";
+        StatusTextBlock.Text = "Connecting to server...";
         
         try
         {
@@ -53,19 +59,21 @@ public partial class LoginDialog : Window
             }
             else
             {
-                MessageBox.Show("Invalid username or password. Please check your credentials.", "Authentication Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                StatusTextBlock.Text = "Invalid username or password. Please check your credentials.";
                 PasswordBox.Password = "";
                 PasswordBox.Focus();
             }
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Connection error: {ex.Message}\n\nPlease ensure the server is running and accessible.", "Connection Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusTextBlock.Text = $"Connection error: {ex.Message}";
         }
         finally
         {
             LoginButton.IsEnabled = true;
             LoginButton.Content = "Login";
+            if (string.IsNullOrEmpty(StatusTextBlock.Text))
+                StatusTextBlock.Text = string.Empty;
         }
     }
     
@@ -79,10 +87,16 @@ public partial class LoginDialog : Window
     {
         try
         {
+            using var cts = new CancellationTokenSource(ConnectionTimeoutMs);
             using var client = new TcpClient();
-            await client.ConnectAsync(_serverAddress, _serverPort);
+            var connectTask = client.ConnectAsync(_serverAddress, _serverPort);
+            var completed = await Task.WhenAny(connectTask, Task.Delay(ConnectionTimeoutMs, cts.Token));
+            if (completed != connectTask)
+                throw new TimeoutException("Connection timed out");
+            await connectTask; // ensure exceptions are observed
             
             using var stream = client.GetStream();
+            stream.ReadTimeout = ReadTimeoutMs;
             
             var request = new
             {
@@ -98,13 +112,26 @@ public partial class LoginDialog : Window
             var data = Encoding.UTF8.GetBytes(json);
             await stream.WriteAsync(data, 0, data.Length);
             
-            // Read response
-            var buffer = new byte[1024];
-            var bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+            // Read response with timeout
+            var buffer = new byte[2048];
+            using var readCts = new CancellationTokenSource(ReadTimeoutMs);
+            var bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, readCts.Token);
+            if (bytesRead <= 0) return false;
             var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
             
-            var responseObj = JsonSerializer.Deserialize<JsonElement>(response);
-            return responseObj.GetProperty("Success").GetBoolean();
+            try
+            {
+                var responseObj = JsonSerializer.Deserialize<JsonElement>(response);
+                if (responseObj.TryGetProperty("Success", out var successProp))
+                {
+                    return successProp.GetBoolean();
+                }
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
         }
         catch
         {
