@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -53,6 +53,7 @@ class Program
         
         // Load existing accounts
         _accountManager.LoadAccounts();
+        _accountManager.LoadComputers();
         
         // Start TCP server
         _listener = new TcpListener(IPAddress.Any, 8888);
@@ -165,6 +166,18 @@ class Program
                 case MessageType.Heartbeat:
                     return CreateResponse(MessageType.Heartbeat, new { Status = "OK" });
                     
+                case MessageType.RegisterComputer:
+                    return await HandleRegisterComputerAsync(request, connection);
+                    
+                case MessageType.UpdateComputerStatus:
+                    return await HandleUpdateComputerStatusAsync(request, connection);
+                    
+                case MessageType.SetComputerTimeLimit:
+                    return await HandleSetComputerTimeLimitAsync(request, connection);
+                    
+                case MessageType.GetComputersForAdmin:
+                    return await HandleGetComputersForAdminAsync(request, connection);
+                    
                 default:
                     return CreateErrorResponse($"Unknown message type: {request.Type}");
             }
@@ -183,13 +196,14 @@ class Program
             return CreateErrorResponse("Username and password are required");
         }
         
-        var result = _accountManager.CreateAccount(data.Username, data.Password);
+        var result = _accountManager.CreateAccount(data.Username, data.Password, data.IsAdmin);
         if (result.Success)
         {
+            var accountType = data.IsAdmin ? "admin" : "user";
             connection.Username = data.Username;
             connection.IsAuthenticated = true;
-            Console.WriteLine($"Account created: {data.Username}");
-            return CreateResponse(MessageType.CreateAccount, new { Success = true, Message = "Account created successfully" }, true);
+            Console.WriteLine($"Account created: {data.Username} ({accountType})");
+            return CreateResponse(MessageType.CreateAccount, new { Success = true, Message = $"{accountType} account created successfully" }, true);
         }
         else
         {
@@ -217,6 +231,80 @@ class Program
         {
             return CreateResponse(MessageType.Login, new { Success = false, Message = result.ErrorMessage }, false);
         }
+    }
+
+    private static async Task<string> HandleRegisterComputerAsync(MessageRequest request, ClientConnection connection)
+    {
+        var data = JsonSerializer.Deserialize<RegisterComputerData>(request.Data?.ToString() ?? "{}");
+        if (data == null || string.IsNullOrWhiteSpace(data.ComputerId) || string.IsNullOrWhiteSpace(data.ComputerName) || string.IsNullOrWhiteSpace(data.AdminUsername))
+        {
+            return CreateErrorResponse("Computer ID, name, and admin username are required");
+        }
+
+        var result = _accountManager.RegisterComputer(data.ComputerId, data.ComputerName, data.AdminUsername);
+        if (result.Success)
+        {
+            Console.WriteLine($"Computer registered: {data.ComputerName} ({data.ComputerId}) under admin {data.AdminUsername}");
+            return CreateResponse(MessageType.RegisterComputer, new { Success = true, Message = "Computer registered successfully", Computer = result.Data }, true);
+        }
+        else
+        {
+            return CreateResponse(MessageType.RegisterComputer, new { Success = false, Message = result.ErrorMessage }, false);
+        }
+    }
+
+    private static async Task<string> HandleUpdateComputerStatusAsync(MessageRequest request, ClientConnection connection)
+    {
+        var data = JsonSerializer.Deserialize<UpdateComputerStatusData>(request.Data?.ToString() ?? "{}");
+        if (data == null || string.IsNullOrWhiteSpace(data.ComputerId))
+        {
+            return CreateErrorResponse("Computer ID is required");
+        }
+
+        var result = _accountManager.UpdateComputerStatus(data.ComputerId, data.IsOnline);
+        if (result.Success)
+        {
+            var status = data.IsOnline ? "online" : "offline";
+            Console.WriteLine($"Computer {data.ComputerId} status updated to {status}");
+            return CreateResponse(MessageType.UpdateComputerStatus, new { Success = true, Message = $"Computer status updated to {status}", Computer = result.Data }, true);
+        }
+        else
+        {
+            return CreateResponse(MessageType.UpdateComputerStatus, new { Success = false, Message = result.ErrorMessage }, false);
+        }
+    }
+
+    private static async Task<string> HandleSetComputerTimeLimitAsync(MessageRequest request, ClientConnection connection)
+    {
+        var data = JsonSerializer.Deserialize<SetComputerTimeLimitData>(request.Data?.ToString() ?? "{}");
+        if (data == null || string.IsNullOrWhiteSpace(data.ComputerId) || string.IsNullOrWhiteSpace(data.AdminUsername))
+        {
+            return CreateErrorResponse("Computer ID and admin username are required");
+        }
+
+        var result = _accountManager.SetComputerTimeLimit(data.ComputerId, data.DailyTimeLimit, data.AdminUsername);
+        if (result.Success)
+        {
+            Console.WriteLine($"Computer {data.ComputerId} time limit set to {data.DailyTimeLimit} by admin {data.AdminUsername}");
+            return CreateResponse(MessageType.SetComputerTimeLimit, new { Success = true, Message = "Time limit updated successfully", Computer = result.Data }, true);
+        }
+        else
+        {
+            return CreateResponse(MessageType.SetComputerTimeLimit, new { Success = false, Message = result.ErrorMessage }, false);
+        }
+    }
+
+    private static async Task<string> HandleGetComputersForAdminAsync(MessageRequest request, ClientConnection connection)
+    {
+        var data = JsonSerializer.Deserialize<GetComputersForAdminData>(request.Data?.ToString() ?? "{}");
+        if (data == null || string.IsNullOrWhiteSpace(data.AdminUsername))
+        {
+            return CreateErrorResponse("Admin username is required");
+        }
+
+        var computers = _accountManager.GetComputersForAdmin(data.AdminUsername);
+        Console.WriteLine($"Retrieved {computers.Count} computers for admin {data.AdminUsername}");
+        return CreateResponse(MessageType.GetComputersForAdmin, new { Success = true, Computers = computers }, true);
     }
     
     private static string CreateResponse(MessageType type, object data)
@@ -258,6 +346,10 @@ public enum MessageType
     CreateAccount = 1,
     Login = 2,
     Heartbeat = 3,
+    RegisterComputer = 4,
+    UpdateComputerStatus = 5,
+    SetComputerTimeLimit = 6,
+    GetComputersForAdmin = 7,
     Error = 99
 }
 
@@ -279,12 +371,38 @@ public class CreateAccountData
 {
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
+    public bool IsAdmin { get; set; } = false;
 }
 
 public class LoginData
 {
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
+}
+
+public class RegisterComputerData
+{
+    public string ComputerId { get; set; } = "";
+    public string ComputerName { get; set; } = "";
+    public string AdminUsername { get; set; } = "";
+}
+
+public class UpdateComputerStatusData
+{
+    public string ComputerId { get; set; } = "";
+    public bool IsOnline { get; set; } = false;
+}
+
+public class SetComputerTimeLimitData
+{
+    public string ComputerId { get; set; } = "";
+    public TimeSpan DailyTimeLimit { get; set; } = TimeSpan.FromHours(1);
+    public string AdminUsername { get; set; } = "";
+}
+
+public class GetComputersForAdminData
+{
+    public string AdminUsername { get; set; } = "";
 }
 
 public class ClientConnection
@@ -336,19 +454,38 @@ public class ConsoleCommandHandler
 
     private void ProcessCommand(string command)
     {
-        switch (command)
+        var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var cmd = parts[0].ToLower();
+        
+        switch (cmd)
         {
             case "help":
                 ShowHelp();
                 break;
+            case "create-admin":
+                if (parts.Length >= 3)
+                {
+                    CreateAdminAccount(parts[1], parts[2]);
+                }
+                else
+                {
+                    Console.WriteLine("Usage: create-admin <username> <password>");
+                }
+                break;
             case "clear-user-data":
                 ClearUserData();
+                break;
+            case "clear-computer-data":
+                ClearComputerData();
                 break;
             case "status":
                 ShowStatus();
                 break;
             case "list-users":
                 ListUsers();
+                break;
+            case "list-computers":
+                ListComputers();
                 break;
             case "quit":
             case "exit":
@@ -364,11 +501,34 @@ public class ConsoleCommandHandler
     {
         Console.WriteLine("\n=== Available Commands ===");
         Console.WriteLine("help              - Show this help message");
+        Console.WriteLine("create-admin <username> <password> - Create a new admin account");
         Console.WriteLine("clear-user-data   - Clear all user accounts and data");
+        Console.WriteLine("clear-computer-data - Clear all computer data and registrations");
         Console.WriteLine("status            - Show server status and statistics");
         Console.WriteLine("list-users        - List all registered users");
+        Console.WriteLine("list-computers    - List all registered computers");
         Console.WriteLine("quit/exit         - Exit the server");
         Console.WriteLine("=======================\n");
+    }
+
+    private void CreateAdminAccount(string username, string password)
+    {
+        try
+        {
+            var result = _accountManager.CreateAccount(username, password, true);
+            if (result.Success)
+            {
+                Console.WriteLine($"Admin account created successfully: {username}");
+            }
+            else
+            {
+                Console.WriteLine($"Failed to create admin account: {result.ErrorMessage}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error creating admin account: {ex.Message}");
+        }
     }
 
     private void ClearUserData()
@@ -406,12 +566,50 @@ public class ConsoleCommandHandler
         }
     }
 
+    private void ClearComputerData()
+    {
+        Console.Write("Are you sure you want to clear ALL computer data? This action cannot be undone. (yes/no): ");
+        var confirmation = Console.ReadLine()?.Trim().ToLower();
+        
+        if (confirmation == "yes")
+        {
+            try
+            {
+                // Clear computers from memory
+                var computerCount = _accountManager.GetComputerCount();
+                _accountManager.ClearAllComputers();
+                
+                // Clear the computers file
+                var computersFilePath = _accountManager.GetComputersFilePath();
+                if (File.Exists(computersFilePath))
+                {
+                    File.Delete(computersFilePath);
+                    Console.WriteLine($"Deleted computers file: {computersFilePath}");
+                }
+                
+                Console.WriteLine($"Successfully cleared {computerCount} computer registrations and all data.");
+                Console.WriteLine("All computer registrations have been permanently deleted.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error clearing computer data: {ex.Message}");
+            }
+        }
+        else
+        {
+            Console.WriteLine("Computer data clear operation cancelled.");
+        }
+    }
+
     private void ShowStatus()
     {
         Console.WriteLine("\n=== Server Status ===");
         Console.WriteLine($"Connected clients: {Program.GetConnectedClientsCount()}");
         Console.WriteLine($"Total accounts: {_accountManager.GetAccountCount()}");
+        Console.WriteLine($"Total computers: {_accountManager.GetComputerCount()}");
+        Console.WriteLine($"Admin accounts: {_accountManager.GetAllAdminUsernames().Count}");
         Console.WriteLine($"Accounts file: {_accountManager.GetAccountsFilePath()}");
+        Console.WriteLine($"Computers file: {_accountManager.GetComputersFilePath()}");
         Console.WriteLine($"Server running: {Program.IsServerRunning()}");
         Console.WriteLine("===================\n");
     }
@@ -419,6 +617,8 @@ public class ConsoleCommandHandler
     private void ListUsers()
     {
         var usernames = _accountManager.GetAllUsernames();
+        var adminUsernames = _accountManager.GetAllAdminUsernames();
+        
         if (usernames.Count == 0)
         {
             Console.WriteLine("\n=== Registered Users ===");
@@ -430,10 +630,41 @@ public class ConsoleCommandHandler
             Console.WriteLine("\n=== Registered Users ===");
             foreach (var username in usernames)
             {
-                Console.WriteLine($"- {username}");
+                var isAdmin = adminUsernames.Contains(username);
+                var adminStatus = isAdmin ? " [ADMIN]" : "";
+                Console.WriteLine($"- {username}{adminStatus}");
             }
-            Console.WriteLine($"Total: {usernames.Count} users");
+            Console.WriteLine($"Total: {usernames.Count} users ({adminUsernames.Count} admins)");
             Console.WriteLine("=======================\n");
+        }
+    }
+
+    private void ListComputers()
+    {
+        var computers = _accountManager.GetAllComputers();
+        if (computers.Count == 0)
+        {
+            Console.WriteLine("\n=== Registered Computers ===");
+            Console.WriteLine("No computers registered.");
+            Console.WriteLine("============================\n");
+        }
+        else
+        {
+            Console.WriteLine("\n=== Registered Computers ===");
+            foreach (var computer in computers)
+            {
+                var status = computer.IsOnline ? "ONLINE" : "OFFLINE";
+                var lastSeen = computer.LastSeen.ToString("yyyy-MM-dd HH:mm:ss");
+                Console.WriteLine($"- {computer.ComputerName} ({computer.ComputerId})");
+                Console.WriteLine($"  Admin: {computer.AdminUsername}");
+                Console.WriteLine($"  Daily Limit: {computer.DailyTimeLimit}");
+                Console.WriteLine($"  Status: {status}");
+                Console.WriteLine($"  Last Seen: {lastSeen}");
+                Console.WriteLine($"  Registered: {computer.RegisteredAt:yyyy-MM-dd HH:mm:ss}");
+                Console.WriteLine();
+            }
+            Console.WriteLine($"Total: {computers.Count} computers");
+            Console.WriteLine("============================\n");
         }
     }
 

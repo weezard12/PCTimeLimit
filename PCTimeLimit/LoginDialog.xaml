@@ -1,0 +1,30 @@
+<Window x:Class="PCTimeLimit.LoginDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PC Time Limit - Admin Login" Height="200" Width="400"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <TextBlock Grid.Row="0" Text="Enter Admin Credentials" 
+                   FontSize="16" FontWeight="Bold" Margin="0,0,0,20" HorizontalAlignment="Center"/>
+        
+        <TextBlock Grid.Row="1" Text="Username:" Margin="0,0,0,5"/>
+        <TextBox x:Name="UsernameTextBox" Grid.Row="2" Margin="0,0,0,10" Height="25"/>
+        
+        <TextBlock Grid.Row="3" Text="Password:" Margin="0,0,0,5"/>
+        <PasswordBox x:Name="PasswordBox" Grid.Row="4" Margin="0,0,0,20" Height="25"/>
+        
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="LoginButton" Content="Login" Width="80" Height="30" Margin="0,0,10,0" Click="LoginButton_Click"/>
+            <Button x:Name="CancelButton" Content="Cancel" Width="80" Height="30" Click="CancelButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

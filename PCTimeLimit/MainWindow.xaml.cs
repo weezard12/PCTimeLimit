@@ -10,6 +10,10 @@ using System.Windows.Threading;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Win32;
+using System.Net.Sockets;
+using System.Net;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace PCTimeLimit;
 
@@ -18,12 +22,33 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private readonly DispatcherTimer _uiTimer;
 	private readonly TimeManager _timeManager;
 	private readonly UsageTracker _usageTracker;
+	private string? _adminUsername;
+	private string? _adminPassword;
+	private string? _computerId;
+	private ClientService? _clientService;
 
 	public event PropertyChangedEventHandler? PropertyChanged;
 
 	public MainWindow()
 	{
 		InitializeComponent();
+		
+		// Show login dialog first
+		var loginDialog = new LoginDialog();
+		var loginResult = loginDialog.ShowDialog();
+		
+		if (loginResult == true && loginDialog.IsAuthenticated)
+		{
+			// Initialize time manager and register with server
+			InitializeApp(loginDialog.AdminUsername!, loginDialog.AdminPassword!);
+		}
+		else
+		{
+			// User cancelled or authentication failed, close the app
+			Application.Current.Shutdown();
+			return;
+		}
+		
 		_timeManager = new TimeManager();
 		_timeManager.Load();
 
@@ -44,6 +69,65 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		PreventClosing();
 		SetRunOnStartup(true);
     }
+
+	private async void InitializeApp(string adminUsername, string adminPassword)
+	{
+		try
+		{
+			// Generate unique computer ID
+			var computerId = Environment.MachineName + "_" + Environment.UserName;
+			var computerName = Environment.MachineName;
+			
+			// Connect to server and register
+			var clientService = new ClientService();
+			if (await clientService.ConnectAsync())
+			{
+				var registered = await clientService.RegisterComputerAsync(computerId, computerName, adminUsername, adminPassword);
+				if (registered)
+				{
+					// Store admin credentials for future use
+					_adminUsername = adminUsername;
+					_adminPassword = adminPassword;
+					_computerId = computerId;
+					_clientService = clientService;
+					
+					// Start periodic status updates
+					StartStatusUpdates();
+				}
+				else
+				{
+					MessageBox.Show("Failed to register computer with server. Please check your credentials.", "Registration Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+					Application.Current.Shutdown();
+					return;
+				}
+			}
+			else
+			{
+				MessageBox.Show("Failed to connect to server. Please ensure the server is running.", "Connection Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+				Application.Current.Shutdown();
+				return;
+			}
+		}
+		catch (Exception ex)
+		{
+			MessageBox.Show($"Error initializing app: {ex.Message}", "Initialization Error", MessageBoxButton.OK, MessageBoxImage.Error);
+			Application.Current.Shutdown();
+			return;
+		}
+	}
+
+	private void StartStatusUpdates()
+	{
+		var statusTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
+		statusTimer.Tick += async (_, _) =>
+		{
+			if (_clientService?.IsConnected == true)
+			{
+				await _clientService.UpdateStatusAsync(_computerId!, true);
+			}
+		};
+		statusTimer.Start();
+	}
 
 	private void UpdateUi()
 	{
@@ -144,6 +228,102 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             this.Activate();
             this.Focus();
         };
+    }
+}
+
+public sealed class ClientService
+{
+    private TcpClient? _client;
+    private NetworkStream? _stream;
+    private readonly string _serverAddress = "127.0.0.1"; // Default to localhost
+    private readonly int _serverPort = 8888;
+    
+    public bool IsConnected => _client?.Connected == true;
+    
+    public async Task<bool> ConnectAsync()
+    {
+        try
+        {
+            _client = new TcpClient();
+            await _client.ConnectAsync(_serverAddress, _serverPort);
+            _stream = _client.GetStream();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+    
+    public async Task<bool> RegisterComputerAsync(string computerId, string computerName, string adminUsername, string adminPassword)
+    {
+        if (!IsConnected) return false;
+        
+        try
+        {
+            var request = new
+            {
+                Type = 4, // RegisterComputer
+                Data = new
+                {
+                    ComputerId = computerId,
+                    ComputerName = computerName,
+                    AdminUsername = adminUsername
+                }
+            };
+            
+            var json = JsonSerializer.Serialize(request);
+            var data = Encoding.UTF8.GetBytes(json);
+            await _stream!.WriteAsync(data, 0, data.Length);
+            
+            // Read response
+            var buffer = new byte[1024];
+            var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
+            var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+            
+            var responseObj = JsonSerializer.Deserialize<dynamic>(response);
+            return responseObj?.GetProperty("Success").GetBoolean() == true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+    
+    public async Task<bool> UpdateStatusAsync(string computerId, bool isOnline)
+    {
+        if (!IsConnected) return false;
+        
+        try
+        {
+            var request = new
+            {
+                Type = 5, // UpdateComputerStatus
+                Data = new
+                {
+                    ComputerId = computerId,
+                    IsOnline = isOnline
+                }
+            };
+            
+            var json = JsonSerializer.Serialize(request);
+            var data = Encoding.UTF8.GetBytes(json);
+            await _stream!.WriteAsync(data, 0, data.Length);
+            
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+    
+    public void Disconnect()
+    {
+        _stream?.Close();
+        _client?.Close();
+        _stream = null;
+        _client = null;
     }
 }
 
