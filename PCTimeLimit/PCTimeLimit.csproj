@@ -15,6 +15,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="InputSimulator" Version="1.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Resource Include="app_icon.png" />
   </ItemGroup>
 

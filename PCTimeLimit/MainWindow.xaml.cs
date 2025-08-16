@@ -197,6 +197,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private void ShowLockout()
 	{
 		MessageBox.Show(this, "Time is up!", "PC Time Limit", MessageBoxButton.OK, MessageBoxImage.Stop);
+		new TimesUpWindow().Show();
 	}
 
 	public void SetRunOnStartup(bool enable)
