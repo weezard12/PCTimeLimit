@@ -41,13 +41,6 @@ class Program
             return;
         }
         
-        // Check if running login fix test
-        if (args.Length > 0 && args[0].ToLower() == "testloginfix")
-        {
-            Console.WriteLine("Running login validation fix test...");
-            TestLoginFix.TestLoginValidation();
-            return;
-        }
         
 
         
