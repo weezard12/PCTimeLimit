@@ -9,6 +9,7 @@
     <Import_RootNamespace>PCTimeLinitShared</Import_RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Consts.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Messaging\MessageType.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Messaging\MessageModels.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Messaging\Data\RequestDtos.cs" />

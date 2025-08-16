@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using PCTimeLinitShared.Messaging;
+using static PCTimeLinitShared.Consts;
 
 namespace PCTimeLimitServer;
 
@@ -26,10 +27,10 @@ class Program
         _accountManager.LoadComputers();
         
         // Start TCP server
-        _listener = new TcpListener(IPAddress.Any, 8888);
+        _listener = new TcpListener(IPAddress.Any, ServerPort);
         _listener.Start();
-        
-        Console.WriteLine($"Server started on port 8888");
+
+        Console.WriteLine($"Server started on {GetLocalIPAddress()} : {ServerPort}");
         Console.WriteLine("Waiting for connections...");
         Console.WriteLine("Type 'help' for available commands");
         Console.WriteLine("Press Ctrl+C to stop the server");
@@ -76,7 +77,21 @@ class Program
             Console.WriteLine($"Error in command handler: {ex.Message}");
         }
     }
-    
+
+    static string GetLocalIPAddress()
+    {
+        foreach (var ip in Dns.GetHostEntry(Dns.GetHostName()).AddressList)
+        {
+            // Get IPv4 address, skip loopback (127.0.0.1)
+            if (ip.AddressFamily == AddressFamily.InterNetwork)
+            {
+                return ip.ToString();
+            }
+        }
+        Console.WriteLine("Error: Failed to get IPv4 address");
+        return "";
+    }
+
     private static async Task HandleClientAsync(TcpClient client)
     {
         var clientId = Guid.NewGuid().ToString();
