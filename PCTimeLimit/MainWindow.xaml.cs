@@ -32,6 +32,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 	public event PropertyChangedEventHandler? PropertyChanged;
 
+	TimesUpWindow timesUpWindow;
+
 	public MainWindow()
 	{
 		InitializeComponent();
@@ -196,8 +198,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 	private void ShowLockout()
 	{
-		MessageBox.Show(this, "Time is up!", "PC Time Limit", MessageBoxButton.OK, MessageBoxImage.Stop);
-		new TimesUpWindow().Show();
+		if(timesUpWindow == null)
+		{
+            timesUpWindow = new TimesUpWindow();
+            timesUpWindow.Show();
+        }
 	}
 
 	public void SetRunOnStartup(bool enable)
