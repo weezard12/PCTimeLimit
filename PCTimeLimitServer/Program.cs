@@ -11,38 +11,14 @@ class Program
     private static readonly Dictionary<string, ClientConnection> _clients = new();
     private static readonly AccountManager _accountManager = new();
     private static bool _isRunning = true;
-    private static readonly ConsoleCommandHandler _commandHandler;
+    private static readonly ConsoleCommandHandler _commandHandler = new ConsoleCommandHandler(_accountManager);
     
     public static int GetConnectedClientsCount() => _clients.Count;
     public static bool IsServerRunning() => _isRunning;
 
-    static Program()
-    {
-        _commandHandler = new ConsoleCommandHandler(_accountManager);
-    }
-
     static async Task Main(string[] args)
     {
         Console.WriteLine("PCTimeLimit Server Starting...");
-        
-        // Check if running in test mode
-        if (args.Length > 0 && args[0].ToLower() == "test")
-        {
-            Console.WriteLine("Running in test mode...");
-            await TestClient.RunTests();
-            return;
-        }
-        
-        // Check if running in local test mode
-        if (args.Length > 0 && args[0].ToLower() == "localtest")
-        {
-            Console.WriteLine("Running local tests...");
-            LocalTest.RunAccountManagerTests();
-            return;
-        }
-        
-        
-
         
         // Load existing accounts
         _accountManager.LoadAccounts();
