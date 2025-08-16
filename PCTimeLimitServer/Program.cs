@@ -169,6 +169,12 @@ class Program
                 case MessageType.AcknowledgeReset:
                     return await HandleAcknowledgeResetAsync(request, connection);
                 
+                case MessageType.ForceLockout:
+                    return await HandleForceLockoutAsync(request, connection);
+
+                case MessageType.AcknowledgeForceLockout:
+                    return await HandleAcknowledgeForceLockoutAsync(request, connection);
+
                 default:
                     return CreateErrorResponse($"Unknown message type: {request.Type}");
             }
@@ -335,6 +341,46 @@ class Program
         else
         {
             return CreateResponse(MessageType.AcknowledgeReset, new { Success = false, Message = result.ErrorMessage }, false);
+        }
+    }
+
+    private static async Task<string> HandleForceLockoutAsync(MessageRequest request, ClientConnection connection)
+    {
+        var data = JsonSerializer.Deserialize<ForceLockoutData>(request.Data?.ToString() ?? "{}");
+        if (data == null || string.IsNullOrWhiteSpace(data.ComputerId) || string.IsNullOrWhiteSpace(data.AdminUsername))
+        {
+            return CreateErrorResponse("Computer ID and admin username are required");
+        }
+
+        var result = _accountManager.QueueForceLockout(data.ComputerId, data.AdminUsername);
+        if (result.Success)
+        {
+            Console.WriteLine($"Queued force lockout for computer {data.ComputerId} by admin {data.AdminUsername}");
+            return CreateResponse(MessageType.ForceLockout, new { Success = true, Message = "Force lockout queued", Computer = result.Data }, true);
+        }
+        else
+        {
+            return CreateResponse(MessageType.ForceLockout, new { Success = false, Message = result.ErrorMessage }, false);
+        }
+    }
+
+    private static async Task<string> HandleAcknowledgeForceLockoutAsync(MessageRequest request, ClientConnection connection)
+    {
+        var data = JsonSerializer.Deserialize<AcknowledgeForceLockoutData>(request.Data?.ToString() ?? "{}");
+        if (data == null || string.IsNullOrWhiteSpace(data.ComputerId))
+        {
+            return CreateErrorResponse("Computer ID is required");
+        }
+
+        var result = _accountManager.AcknowledgeForceLockout(data.ComputerId);
+        if (result.Success)
+        {
+            Console.WriteLine($"Force lockout acknowledged by computer {data.ComputerId}");
+            return CreateResponse(MessageType.AcknowledgeForceLockout, new { Success = true, Message = "Force lockout acknowledged", Computer = result.Data }, true);
+        }
+        else
+        {
+            return CreateResponse(MessageType.AcknowledgeForceLockout, new { Success = false, Message = result.ErrorMessage }, false);
         }
     }
     

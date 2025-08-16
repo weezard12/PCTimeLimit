@@ -64,6 +64,9 @@
                 <Button x:Name="UpdateTimeLimitButton" Content="Update Time Limit" 
                         Width="180" Height="30" Click="UpdateTimeLimitButton_Click" Margin="0,0,0,10"/>
                 
+                <Button x:Name="SetZeroButton" Content="Set Limit to 0" 
+                        Width="180" Height="30" Click="SetZeroButton_Click" Margin="0,0,0,10"/>
+                
                 <Button x:Name="ResetTimerButton" Content="Reset Timer" 
                         Width="180" Height="30" Click="ResetTimerButton_Click" Margin="0,0,0,10"/>
                 

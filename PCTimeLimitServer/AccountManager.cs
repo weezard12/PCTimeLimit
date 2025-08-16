@@ -54,6 +54,39 @@ public class AccountManager
         }
     }
 
+    public ComputerResult QueueForceLockout(string computerId, string adminUsername)
+    {
+        if (!_accounts.TryGetValue(adminUsername, out var account) || !account.IsAdmin)
+        {
+            return new ComputerResult { Success = false, ErrorMessage = "Invalid admin account" };
+        }
+
+        if (_computers.TryGetValue(computerId, out var computer))
+        {
+            if (!string.Equals(computer.AdminUsername, adminUsername, StringComparison.OrdinalIgnoreCase))
+            {
+                return new ComputerResult { Success = false, ErrorMessage = "You can only modify computers under your control" };
+            }
+
+            computer.PendingForceLockout = true;
+            SaveComputers();
+            return new ComputerResult { Success = true, Data = computer };
+        }
+
+        return new ComputerResult { Success = false, ErrorMessage = "Computer not found" };
+    }
+
+    public ComputerResult AcknowledgeForceLockout(string computerId)
+    {
+        if (_computers.TryGetValue(computerId, out var computer))
+        {
+            computer.PendingForceLockout = false;
+            SaveComputers();
+            return new ComputerResult { Success = true, Data = computer };
+        }
+        return new ComputerResult { Success = false, ErrorMessage = "Computer not found" };
+    }
+
     public void LoadComputers()
     {
         try
@@ -409,6 +442,7 @@ public class ComputerInfo
     public DateTime LastSeen { get; set; }
     public bool IsOnline { get; set; } = false;
     public bool PendingReset { get; set; } = false;
+    public bool PendingForceLockout { get; set; } = false;
 }
 
 public class AccountResult

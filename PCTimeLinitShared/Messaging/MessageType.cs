@@ -11,5 +11,7 @@ public enum MessageType
     GetComputersForAdmin = 7,
     ResetComputerTimer = 8,
     AcknowledgeReset = 9,
+    ForceLockout = 10,
+    AcknowledgeForceLockout = 11,
     Error = 99
 }

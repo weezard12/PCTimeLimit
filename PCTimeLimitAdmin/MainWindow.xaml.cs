@@ -207,12 +207,14 @@ public partial class MainWindow : Window
             
             UpdateTimeLimitButton.IsEnabled = true;
             ResetTimerButton.IsEnabled = true;
+            SetZeroButton.IsEnabled = true;
         }
         else
         {
             SelectedComputerText.Text = "None";
             UpdateTimeLimitButton.IsEnabled = false;
             ResetTimerButton.IsEnabled = false;
+            SetZeroButton.IsEnabled = false;
         }
     }
     
@@ -342,6 +344,46 @@ public partial class MainWindow : Window
         finally
         {
             ResetTimerButton.IsEnabled = _selectedComputer != null;
+        }
+    }
+
+    private async void SetZeroButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComputer == null || _tcpClient?.IsConnected != true || string.IsNullOrEmpty(_loggedInUsername)) return;
+        try
+        {
+            var request = new
+            {
+                Type = 10, // ForceLockout
+                Data = new
+                {
+                    ComputerId = _selectedComputer.ComputerId,
+                    AdminUsername = _loggedInUsername
+                }
+            };
+
+            SetZeroButton.IsEnabled = false;
+            var response = await _tcpClient.SendMessageAsync(request);
+            if (response?.Success == true)
+            {
+                StatusText.Text = $"Forced time's up for {_selectedComputer.ComputerName}.";
+                MessageBox.Show($"Time's up has been triggered for {_selectedComputer.ComputerName}. The daily limit remains unchanged.", "Force Lockout Queued", MessageBoxButton.OK, MessageBoxImage.Information);
+                await LoadComputersAsync();
+            }
+            else
+            {
+                StatusText.Text = $"Failed to set time limit: {response?.ErrorMessage}";
+                MessageBox.Show($"Failed to set time limit: {response?.ErrorMessage}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Error setting time limit: {ex.Message}";
+            MessageBox.Show($"Error setting time limit: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            SetZeroButton.IsEnabled = _selectedComputer != null;
         }
     }
 }

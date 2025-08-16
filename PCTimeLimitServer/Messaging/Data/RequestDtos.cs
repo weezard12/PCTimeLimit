@@ -50,3 +50,14 @@ public class AcknowledgeResetData
 {
     public string ComputerId { get; set; } = "";
 }
+
+public class ForceLockoutData
+{
+    public string ComputerId { get; set; } = "";
+    public string AdminUsername { get; set; } = "";
+}
+
+public class AcknowledgeForceLockoutData
+{
+    public string ComputerId { get; set; } = "";
+}

@@ -281,6 +281,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     // Acknowledge to server so it clears the queue
                     _ = _clientService.AcknowledgeResetAsync(_computerId!);
                 }
+                if (state.PendingForceLockout)
+                {
+                    // Force immediate lockout without changing daily limit
+                    _timeManager.Remaining = TimeSpan.Zero;
+                    UpdateUi();
+                    ShowLockout();
+                    // Acknowledge to server so it clears the queue
+                    _ = _clientService.AcknowledgeForceLockoutAsync(_computerId!);
+                }
             }
         }
         catch { }
@@ -474,6 +483,7 @@ public sealed class ClientService
     {
         public TimeSpan? DailyLimit { get; set; }
         public bool PendingReset { get; set; }
+        public bool PendingForceLockout { get; set; }
     }
 
     public async Task<ComputerState?> GetComputerStateAsync(string adminUsername, string computerId)
@@ -531,6 +541,14 @@ public sealed class ClientService
                 {
                     state.PendingReset = false;
                 }
+                if (comp.TryGetProperty("PendingForceLockout", out var pflEl) && pflEl.ValueKind == JsonValueKind.True)
+                {
+                    state.PendingForceLockout = true;
+                }
+                else if (comp.TryGetProperty("PendingForceLockout", out pflEl) && pflEl.ValueKind == JsonValueKind.False)
+                {
+                    state.PendingForceLockout = false;
+                }
                 return state;
             }
 
@@ -557,6 +575,30 @@ public sealed class ClientService
             await _stream!.WriteAsync(data, 0, data.Length);
 
             // best-effort; no need to block on response, but try to read small
+            var buffer = new byte[256];
+            var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
+            return bytesRead > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public async Task<bool> AcknowledgeForceLockoutAsync(string computerId)
+    {
+        if (!IsConnected) return false;
+        try
+        {
+            var request = new
+            {
+                Type = 11, // AcknowledgeForceLockout
+                Data = new { ComputerId = computerId }
+            };
+            var json = JsonSerializer.Serialize(request);
+            var data = Encoding.UTF8.GetBytes(json);
+            await _stream!.WriteAsync(data, 0, data.Length);
+
             var buffer = new byte[256];
             var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
             return bytesRead > 0;
