@@ -21,12 +21,13 @@ namespace PCTimeLimit
         // for simulating inputs.
         private InputSimulator sim = new InputSimulator();
 
+        // Flag to control whether closing should be prevented
+        private bool allowClose = false;
+
         public TimesUpWindow()
         {
             InitializeComponent();
-
             //PreventClosing();
-
             //HookKeyboard();
         }
 
@@ -34,13 +35,32 @@ namespace PCTimeLimit
         {
             this.Closing += (s, e) =>
             {
-                e.Cancel = true;
+                // Only cancel if allowClose is false
+                if (!allowClose)
+                {
+                    e.Cancel = true;
+                }
             };
             this.Loaded += (s, e) =>
             {
                 this.Activate();
                 this.Focus();
             };
+        }
+
+        /// <summary>
+        /// Forces the window to close, bypassing any closing prevention mechanisms
+        /// </summary>
+        public void ForceClose()
+        {
+            // Set flag to allow closing
+            allowClose = true;
+
+            // Use Dispatcher to ensure we're on the UI thread
+            Dispatcher.Invoke(() =>
+            {
+                this.Close();
+            });
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -69,7 +89,6 @@ namespace PCTimeLimit
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
 
-
         // For canceling windows key
         private void HookKeyboard()
         {
@@ -84,11 +103,11 @@ namespace PCTimeLimit
                         Dispatcher.Invoke(() => TypeWindowsText());
                         Thread.Sleep(50); // Prevent spamming
                     }
-
                     Thread.Sleep(50); // Reduce CPU usage
                 }
             });
         }
+
         private void TypeWindowsText()
         {
             sim.Keyboard.KeyPress(WindowsInput.Native.VirtualKeyCode.ESCAPE); // Simulate typing "Windows"

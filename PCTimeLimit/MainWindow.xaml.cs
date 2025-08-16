@@ -32,7 +32,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 	public event PropertyChangedEventHandler? PropertyChanged;
 
-	TimesUpWindow timesUpWindow;
+	TimesUpWindow? timesUpWindow;
 
 	public MainWindow()
 	{
@@ -159,6 +159,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private void UpdateUi()
 	{
 		RemainingTimeText.Text = _timeManager.Remaining.ToString();
+		if(_timeManager.Remaining > TimeSpan.Zero)
+		{
+			if(timesUpWindow != null)
+			{
+				timesUpWindow.ForceClose();
+				timesUpWindow = null;
+			}
+		}
 	}
 
 	private void OnOpenControlPanelClick(object sender, RoutedEventArgs e)
