@@ -355,7 +355,3 @@ class Program
         return JsonSerializer.Serialize(response);
     }
 }
-
-// Note: Message types and models moved to 'Messaging/' and 'Messaging/Data/'.
-//       Client connection moved to 'Networking/'.
-//       Console command handler moved to 'Commands/'.
