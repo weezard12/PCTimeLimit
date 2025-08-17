@@ -220,7 +220,11 @@ class Program
             connection.Username = data.Username;
             connection.IsAuthenticated = true;
             Console.WriteLine($"Account created: {data.Username} ({accountType})");
-            return CreateResponse(MessageType.CreateAccount, new { Success = true, Message = $"{accountType} account created successfully" }, true);
+            var adminCode = data.IsAdmin ? _accountManager.GetAdminCode(data.Username) : null;
+            return CreateResponse(
+                MessageType.CreateAccount,
+                new { Success = true, Message = $"{accountType} account created successfully", AdminCode = adminCode },
+                true);
         }
         else
         {

@@ -17,6 +17,8 @@
                        FontSize="24" FontWeight="Bold" HorizontalAlignment="Center"/>
             <TextBlock x:Name="UserInfoTextBlock" Text="Not logged in" 
                        FontSize="14" HorizontalAlignment="Center" Margin="0,10,0,0"/>
+            <TextBlock x:Name="AdminCodeTextBlock" Text="" 
+                       FontSize="14" HorizontalAlignment="Center" Foreground="DarkBlue"/>
         </StackPanel>
         
         <!-- Connection Controls -->

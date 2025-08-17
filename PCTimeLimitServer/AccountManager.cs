@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 
 namespace PCTimeLimitServer;
@@ -185,6 +186,12 @@ public class AccountManager
             CreatedAt = DateTime.UtcNow,
             LastLoginAt = null
         };
+
+        // If admin, generate a unique 6-digit admin code
+        if (isAdmin)
+        {
+            account.AdminCode = GenerateUniqueAdminCode();
+        }
         
         _accounts[username] = account;
         SaveAccounts();
@@ -421,6 +428,33 @@ public class AccountManager
     {
         return _accounts.Values.Where(a => a.IsAdmin).Select(a => a.Username).ToList();
     }
+
+    // Returns the admin code for a given username if the account exists and is an admin
+    public string? GetAdminCode(string username)
+    {
+        return _accounts.TryGetValue(username, out var account) && account.IsAdmin
+            ? account.AdminCode
+            : null;
+    }
+
+    private static readonly Random random = new Random();
+    private static readonly char[] letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".ToCharArray();
+
+    /// <summary>
+    /// Generates a random 6-character string consisting of capital letters
+    /// </summary>
+    /// <returns>A 6-character string with random capital letters</returns>
+    public static string GenerateUniqueAdminCode()
+    {
+        StringBuilder result = new StringBuilder(6);
+
+        for (int i = 0; i < 6; i++)
+        {
+            result.Append(letters[random.Next(letters.Length)]);
+        }
+
+        return result.ToString();
+    }
 }
 
 public class Account
@@ -430,6 +464,7 @@ public class Account
     public bool IsAdmin { get; set; } = false;
     public DateTime CreatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
+    public string? AdminCode { get; set; }
 }
 
 public class ComputerInfo

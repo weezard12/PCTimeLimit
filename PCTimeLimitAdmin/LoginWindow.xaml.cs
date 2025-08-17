@@ -9,6 +9,7 @@ public partial class LoginWindow : Window
 {
     private TcpClientService? _tcpClient;
     public string? LoggedInUsername { get; private set; }
+    public string? CreatedAdminCode { get; private set; }
     
     public LoginWindow()
     {
@@ -56,6 +57,24 @@ public partial class LoginWindow : Window
             {
                 SetStatus("Account created successfully!", true);
                 LoggedInUsername = username;
+                // Try to extract AdminCode if provided
+                try
+                {
+                    if (response.Data != null)
+                    {
+                        var dataJson = JsonSerializer.Serialize(response.Data);
+                        var dataObj = JsonSerializer.Deserialize<Dictionary<string, object>>(dataJson);
+                        if (dataObj != null && dataObj.ContainsKey("AdminCode"))
+                        {
+                            var code = dataObj["AdminCode"]?.ToString();
+                            if (!string.IsNullOrWhiteSpace(code))
+                            {
+                                CreatedAdminCode = code;
+                            }
+                        }
+                    }
+                }
+                catch { /* ignore parse errors */ }
                 
                 // Auto-login after successful account creation
                 await Task.Delay(1000);

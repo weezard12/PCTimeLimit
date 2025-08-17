@@ -30,6 +30,17 @@ public partial class MainWindow : Window
         {
             _loggedInUsername = loginWindow.LoggedInUsername;
             UserInfoTextBlock.Text = $"Logged in as: {_loggedInUsername}";
+            // If the account was just created and server provided an AdminCode, display it
+            if (!string.IsNullOrWhiteSpace(loginWindow.CreatedAdminCode))
+            {
+                AdminCodeTextBlock.Text = $"Your Admin Code: {loginWindow.CreatedAdminCode}";
+                AdminCodeTextBlock.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                AdminCodeTextBlock.Text = string.Empty;
+                AdminCodeTextBlock.Visibility = Visibility.Collapsed;
+            }
             UpdateConnectionStatus(false, "Ready to connect");
             
             // Check if user is admin
