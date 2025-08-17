@@ -239,14 +239,18 @@ class Program
         {
             return CreateErrorResponse("Username and password are required");
         }
-        
+
         var result = _accountManager.ValidateLogin(data.Username, data.Password);
         if (result.Success)
         {
             connection.Username = data.Username;
             connection.IsAuthenticated = true;
             Console.WriteLine($"User logged in: {data.Username}");
-            return CreateResponse(MessageType.Login, new { Success = true, Message = "Login successful" }, true);
+            var adminCode = _accountManager.GetAdminCode(data.Username);
+            return CreateResponse(
+                MessageType.Login,
+                new { Success = true, Message = "Login successful", AdminCode = adminCode },
+                true);
         }
         else
         {
@@ -257,15 +261,26 @@ class Program
     private static async Task<string> HandleRegisterComputerAsync(MessageRequest request, ClientConnection connection)
     {
         var data = JsonSerializer.Deserialize<RegisterComputerData>(request.Data?.ToString() ?? "{}");
-        if (data == null || string.IsNullOrWhiteSpace(data.ComputerId) || string.IsNullOrWhiteSpace(data.ComputerName) || string.IsNullOrWhiteSpace(data.AdminUsername))
+        if (data == null || string.IsNullOrWhiteSpace(data.ComputerId) || string.IsNullOrWhiteSpace(data.ComputerName))
         {
-            return CreateErrorResponse("Computer ID, name, and admin username are required");
+            return CreateErrorResponse("Computer ID and name are required");
         }
 
-        var result = _accountManager.RegisterComputer(data.ComputerId, data.ComputerName, data.AdminUsername);
+        // Resolve admin username by AdminCode if provided
+        var adminUsername = data.AdminUsername;
+        if (string.IsNullOrWhiteSpace(adminUsername) && !string.IsNullOrWhiteSpace(data.AdminCode))
+        {
+            adminUsername = _accountManager.GetAdminUsernameByCode(data.AdminCode);
+        }
+        if (string.IsNullOrWhiteSpace(adminUsername))
+        {
+            return CreateResponse(MessageType.RegisterComputer, new { Success = false, Message = "Invalid or missing admin identifier" }, false);
+        }
+
+        var result = _accountManager.RegisterComputer(data.ComputerId, data.ComputerName, adminUsername);
         if (result.Success)
         {
-            Console.WriteLine($"Computer registered: {data.ComputerName} ({data.ComputerId}) under admin {data.AdminUsername}");
+            Console.WriteLine($"Computer registered: {data.ComputerName} ({data.ComputerId}) under admin {adminUsername}");
             return CreateResponse(MessageType.RegisterComputer, new { Success = true, Message = "Computer registered successfully", Computer = result.Data }, true);
         }
         else
@@ -318,12 +333,22 @@ class Program
     private static async Task<string> HandleGetComputersForAdminAsync(MessageRequest request, ClientConnection connection)
     {
         var data = JsonSerializer.Deserialize<GetComputersForAdminData>(request.Data?.ToString() ?? "{}");
-        if (data == null || string.IsNullOrWhiteSpace(data.AdminUsername))
+        if (data == null)
         {
-            return CreateErrorResponse("Admin username is required");
+            return CreateErrorResponse("Invalid request");
         }
 
-        var computers = _accountManager.GetComputersForAdmin(data.AdminUsername);
+        var adminUsername = data.AdminUsername;
+        if (string.IsNullOrWhiteSpace(adminUsername) && !string.IsNullOrWhiteSpace(data.AdminCode))
+        {
+            adminUsername = _accountManager.GetAdminUsernameByCode(data.AdminCode);
+        }
+        if (string.IsNullOrWhiteSpace(adminUsername))
+        {
+            return CreateResponse(MessageType.GetComputersForAdmin, new { Success = false, Message = "Invalid or missing admin identifier" }, false);
+        }
+
+        var computers = _accountManager.GetComputersForAdmin(adminUsername);
         Console.WriteLine($"Retrieved {computers.Count} computers for admin {data.AdminUsername}");
         return CreateResponse(MessageType.GetComputersForAdmin, new { Success = true, Computers = computers }, true);
     }

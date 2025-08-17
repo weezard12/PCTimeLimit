@@ -19,7 +19,7 @@ public class RegisterComputerData
 {
     public string ComputerId { get; set; } = "";
     public string ComputerName { get; set; } = "";
-    public string AdminUsername { get; set; } = "";
+    public string? AdminCode { get; set; }
 }
 
 public class UpdateComputerStatusData
@@ -38,6 +38,7 @@ public class SetComputerTimeLimitData
 public class GetComputersForAdminData
 {
     public string AdminUsername { get; set; } = "";
+    public string? AdminCode { get; set; }
 }
 
 public class ResetComputerTimerData

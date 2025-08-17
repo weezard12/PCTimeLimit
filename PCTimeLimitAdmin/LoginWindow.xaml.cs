@@ -142,6 +142,24 @@ public partial class LoginWindow : Window
             {
                 SetStatus("Login successful!", true);
                 LoggedInUsername = username;
+                // Try to extract AdminCode if provided on login
+                try
+                {
+                    if (response.Data != null)
+                    {
+                        var dataJson = JsonSerializer.Serialize(response.Data);
+                        var dataObj = JsonSerializer.Deserialize<Dictionary<string, object>>(dataJson);
+                        if (dataObj != null && dataObj.ContainsKey("AdminCode"))
+                        {
+                            var code = dataObj["AdminCode"]?.ToString();
+                            if (!string.IsNullOrWhiteSpace(code))
+                            {
+                                CreatedAdminCode = code;
+                            }
+                        }
+                    }
+                }
+                catch { /* ignore parse errors */ }
                 
                 // Close login window and open main window
                 await Task.Delay(1000);

@@ -304,6 +304,17 @@ public partial class MainWindow : Window
         {
             _loggedInUsername = loginWindow.LoggedInUsername;
             UserInfoTextBlock.Text = $"Logged in as: {_loggedInUsername}";
+            // Show Admin Code if server returned it on login
+            if (!string.IsNullOrWhiteSpace(loginWindow.CreatedAdminCode))
+            {
+                AdminCodeTextBlock.Text = $"Your Admin Code: {loginWindow.CreatedAdminCode}";
+                AdminCodeTextBlock.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                AdminCodeTextBlock.Text = string.Empty;
+                AdminCodeTextBlock.Visibility = Visibility.Collapsed;
+            }
             UpdateConnectionStatus(false, "Ready to connect");
         }
         else

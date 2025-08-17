@@ -437,6 +437,21 @@ public class AccountManager
             : null;
     }
 
+    // Resolve an admin username by its AdminCode; returns null if not found or not admin
+    public string? GetAdminUsernameByCode(string adminCode)
+    {
+        if (string.IsNullOrWhiteSpace(adminCode)) return null;
+        foreach (var kv in _accounts)
+        {
+            var acc = kv.Value;
+            if (acc.IsAdmin && string.Equals(acc.AdminCode, adminCode, StringComparison.OrdinalIgnoreCase))
+            {
+                return acc.Username;
+            }
+        }
+        return null;
+    }
+
     private static readonly Random random = new Random();
     private static readonly char[] letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".ToCharArray();
 

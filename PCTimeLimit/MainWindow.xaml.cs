@@ -23,8 +23,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private readonly DispatcherTimer _uiTimer;
 	private readonly TimeManager _timeManager;
 	private readonly UsageTracker _usageTracker;
-	private string? _adminUsername;
-	private string? _adminPassword;
+	private string? _adminCode;
 	private string? _computerId;
 	private ClientService? _clientService;
 	private TimeSpan? _serverDailyLimitPending;
@@ -39,14 +38,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	{
 		InitializeComponent();
 		
-		// Show login dialog first
+		// Show login dialog
 		var loginDialog = new LoginDialog();
 		var loginResult = loginDialog.ShowDialog();
 		
 		if (loginResult == true && loginDialog.IsAuthenticated)
 		{
 			// Initialize time manager and register with server
-			InitializeApp(loginDialog.AdminUsername!, loginDialog.AdminPassword!);
+			InitializeApp(loginDialog.AdminCode!);
 		}
 		else
 		{
@@ -84,7 +83,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		StartSyncTimer();
     }
 
-	private async void InitializeApp(string adminUsername, string adminPassword)
+	private async void InitializeApp(string adminCode)
 	{
 		try
 		{
@@ -96,12 +95,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 			var clientService = new ClientService();
 			if (await clientService.ConnectAsync())
 			{
-				var regResult = await clientService.RegisterComputerAsync(computerId, computerName, adminUsername, adminPassword);
+				var regResult = await clientService.RegisterComputerAsync(computerId, computerName, adminCode);
 				if (regResult.Success)
 				{
-					// Store admin credentials for future use
-					_adminUsername = adminUsername;
-					_adminPassword = adminPassword;
+					// Store admin code for future use
+					_adminCode = adminCode;
 					_computerId = computerId;
 					_clientService = clientService;
 					// Capture server-provided daily limit (applied after TimeManager is created)
@@ -112,7 +110,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 				}
 				else
 				{
-					MessageBox.Show("Failed to register computer with server. Please check your credentials.", "Registration Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+					MessageBox.Show("Failed to register computer with server. Please check the admin code.", "Registration Failed", MessageBoxButton.OK, MessageBoxImage.Error);
 					Application.Current.Shutdown();
 					return;
 				}
@@ -259,11 +257,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async Task SyncDailyLimitFromServerAsync(string reason)
     {
         if (_syncInProgress) return;
-        if (_clientService?.IsConnected != true || string.IsNullOrWhiteSpace(_adminUsername) || string.IsNullOrWhiteSpace(_computerId)) return;
+        if (_clientService?.IsConnected != true || string.IsNullOrWhiteSpace(_adminCode) || string.IsNullOrWhiteSpace(_computerId)) return;
         try
         {
             _syncInProgress = true;
-            var state = await _clientService.GetComputerStateAsync(_adminUsername!, _computerId!);
+            var state = await _clientService.GetComputerStateAsync(_adminCode!, _computerId!);
             if (state != null)
             {
                 if (state.DailyLimit.HasValue && state.DailyLimit.Value > TimeSpan.Zero && state.DailyLimit.Value != _timeManager.DailyLimit)
@@ -325,7 +323,7 @@ public sealed class ClientService
         public TimeSpan DailyLimit { get; set; }
     }
 
-    public async Task<RegisterComputerResult> RegisterComputerAsync(string computerId, string computerName, string adminUsername, string adminPassword)
+    public async Task<RegisterComputerResult> RegisterComputerAsync(string computerId, string computerName, string adminCode)
     {
         if (!IsConnected) return new RegisterComputerResult { Success = false, DailyLimit = TimeSpan.Zero };
         
@@ -338,7 +336,8 @@ public sealed class ClientService
                 {
                     ComputerId = computerId,
                     ComputerName = computerName,
-                    AdminUsername = adminUsername
+                    AdminUsername = string.Empty,
+                    AdminCode = adminCode
                 }
             };
             
@@ -418,7 +417,7 @@ public sealed class ClientService
         }
     }
     
-    public async Task<TimeSpan?> GetDailyLimitAsync(string adminUsername, string computerId)
+    public async Task<TimeSpan?> GetDailyLimitAsync(string adminCode, string computerId)
     {
         if (!IsConnected) return null;
         try
@@ -426,7 +425,7 @@ public sealed class ClientService
             var request = new
             {
                 Type = 7, // GetComputersForAdmin
-                Data = new { AdminUsername = adminUsername }
+                Data = new { AdminUsername = string.Empty, AdminCode = adminCode }
             };
 
             var json = JsonSerializer.Serialize(request);
@@ -484,7 +483,7 @@ public sealed class ClientService
         public bool PendingForceLockout { get; set; }
     }
 
-    public async Task<ComputerState?> GetComputerStateAsync(string adminUsername, string computerId)
+    public async Task<ComputerState?> GetComputerStateAsync(string adminCode, string computerId)
     {
         if (!IsConnected) return null;
         try
@@ -492,7 +491,7 @@ public sealed class ClientService
             var request = new
             {
                 Type = 7, // GetComputersForAdmin
-                Data = new { AdminUsername = adminUsername }
+                Data = new { AdminUsername = string.Empty, AdminCode = adminCode }
             };
 
             var json = JsonSerializer.Serialize(request);
