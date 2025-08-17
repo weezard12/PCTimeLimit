@@ -29,6 +29,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private TimeSpan? _serverDailyLimitPending;
 	private DispatcherTimer? _syncTimer;
 	private bool _syncInProgress;
+	private DispatcherTimer? _reconnectTimer;
 
 	public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -38,20 +39,29 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	{
 		InitializeComponent();
 		
-		// Show login dialog
-		var loginDialog = new LoginDialog();
-		var loginResult = loginDialog.ShowDialog();
-		
-		if (loginResult == true && loginDialog.IsAuthenticated)
+		// Try to load saved Admin Code and auto-continue
+		var saved = LoadClientSettings();
+		if (saved != null && !string.IsNullOrWhiteSpace(saved.AdminCode) && saved.AdminCode.Length == 6)
 		{
-			// Initialize time manager and register with server
-			InitializeApp(loginDialog.AdminCode!);
+			InitializeApp(saved.AdminCode);
 		}
 		else
 		{
-			// User cancelled or authentication failed, close the app
-			Application.Current.Shutdown();
-			return;
+			// Show login dialog to get Admin Code
+			var loginDialog = new LoginDialog();
+			var loginResult = loginDialog.ShowDialog();
+			
+			if (loginResult == true && loginDialog.IsAuthenticated)
+			{
+				// Initialize time manager and register with server
+				InitializeApp(loginDialog.AdminCode!);
+			}
+			else
+			{
+				// User cancelled or authentication failed, close the app
+				Application.Current.Shutdown();
+				return;
+			}
 		}
 		
 		_timeManager = new TimeManager();
@@ -102,6 +112,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 					_adminCode = adminCode;
 					_computerId = computerId;
 					_clientService = clientService;
+					// Persist for next startup
+					SaveClientSettings(new ClientSettings { AdminCode = adminCode, ComputerId = computerId });
 					// Capture server-provided daily limit (applied after TimeManager is created)
 					_serverDailyLimitPending = regResult.DailyLimit;
 					
@@ -117,9 +129,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 			}
 			else
 			{
-				MessageBox.Show("Failed to connect to server. Please ensure the server is running.", "Connection Failed", MessageBoxButton.OK, MessageBoxImage.Error);
-				Application.Current.Shutdown();
-				return;
+				// Offline mode: proceed to timer and retry connecting every minute
+				_adminCode = adminCode;
+				_computerId = computerId;
+				SaveClientSettings(new ClientSettings { AdminCode = adminCode, ComputerId = computerId });
+				StartReconnectTimer(computerId, computerName, adminCode);
 			}
 		}
 		catch (Exception ex)
@@ -128,6 +142,45 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 			Application.Current.Shutdown();
 			return;
 		}
+	}
+
+	private void StartReconnectTimer(string computerId, string computerName, string adminCode)
+	{
+		_reconnectTimer?.Stop();
+		_reconnectTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+		_reconnectTimer.Tick += async (_, _) =>
+		{
+			await TryConnectAndRegisterAsync(computerId, computerName, adminCode);
+		};
+		_reconnectTimer.Start();
+	}
+
+	private async Task TryConnectAndRegisterAsync(string computerId, string computerName, string adminCode)
+	{
+		try
+		{
+			if (_clientService?.IsConnected == true) return;
+			var client = new ClientService();
+			if (!await client.ConnectAsync()) return;
+			var reg = await client.RegisterComputerAsync(computerId, computerName, adminCode);
+			if (!reg.Success) return;
+
+			_clientService = client;
+			// Persist (already saved on startup, but keep it idempotent)
+			SaveClientSettings(new ClientSettings { AdminCode = adminCode, ComputerId = computerId });
+			// If server provided a daily limit, apply now if _timeManager exists
+			_serverDailyLimitPending = reg.DailyLimit;
+			if (_timeManager != null && _serverDailyLimitPending.HasValue)
+			{
+				_timeManager.UpdateDailyLimit(_serverDailyLimitPending.Value);
+				_serverDailyLimitPending = null;
+			}
+			// Start background tasks now that we're connected
+			StartStatusUpdates();
+			StartSyncTimer();
+			_reconnectTimer?.Stop();
+		}
+		catch { }
 	}
 
 	private void StartStatusUpdates()
@@ -143,8 +196,35 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		statusTimer.Start();
 	}
 
+	private static ClientSettings? LoadClientSettings()
+	{
+		try
+		{
+			AppStorage.EnsureFolder();
+			if (File.Exists(AppStorage.ClientFilePath))
+			{
+				var json = File.ReadAllText(AppStorage.ClientFilePath);
+				return JsonSerializer.Deserialize<ClientSettings>(json);
+			}
+		}
+		catch { }
+		return null;
+	}
+
+	private static void SaveClientSettings(ClientSettings settings)
+	{
+		try
+		{
+			AppStorage.EnsureFolder();
+			var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+			File.WriteAllText(AppStorage.ClientFilePath, json);
+		}
+		catch { }
+	}
+
 	private void StartSyncTimer()
 	{
+		_syncTimer?.Stop();
 		_syncTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
 		_syncTimer.Tick += async (_, _) =>
 		{
@@ -620,6 +700,7 @@ public sealed class AppStorage
 	public static string AppFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PCTimeLimit");
 	public static string SettingsFilePath => Path.Combine(AppFolder, "settings.json");
 	public static string UsageFilePath => Path.Combine(AppFolder, "usage.json");
+	public static string ClientFilePath => Path.Combine(AppFolder, "client.json");
 
 	public static void EnsureFolder()
 	{
@@ -628,6 +709,12 @@ public sealed class AppStorage
 			Directory.CreateDirectory(AppFolder);
 		}
 	}
+}
+
+public sealed class ClientSettings
+{
+    public string AdminCode { get; set; } = string.Empty;
+    public string ComputerId { get; set; } = string.Empty;
 }
 
 public sealed class AppSettings
