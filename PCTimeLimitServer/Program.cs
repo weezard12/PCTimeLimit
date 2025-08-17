@@ -25,12 +25,16 @@ class Program
         // Load existing accounts
         _accountManager.LoadAccounts();
         _accountManager.LoadComputers();
-        
+
+        string localIP = GetLocalIPAddress(); // Your method from before
+        IPAddress ipAddress = IPAddress.Parse(localIP);
+
         // Start TCP server
         _listener = new TcpListener(IPAddress.Any, ServerPort);
+
         _listener.Start();
 
-        Console.WriteLine($"Server started on {GetLocalIPAddress()} : {ServerPort}");
+        Console.WriteLine($"Server started on {ipAddress} : {ServerPort}");
         Console.WriteLine("Waiting for connections...");
         Console.WriteLine("Type 'help' for available commands");
         Console.WriteLine("Press Ctrl+C to stop the server");
@@ -82,12 +86,28 @@ class Program
     {
         foreach (var ip in Dns.GetHostEntry(Dns.GetHostName()).AddressList)
         {
-            // Get IPv4 address, skip loopback (127.0.0.1)
-            if (ip.AddressFamily == AddressFamily.InterNetwork)
+            if (ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
+            {
+                // Prefer common private network ranges
+                string ipString = ip.ToString();
+                if (ipString.StartsWith("192.168.") ||
+                    ipString.StartsWith("10.") ||
+                    (ipString.StartsWith("172.")))
+                {
+                    return ipString;
+                }
+            }
+        }
+
+        // Fallback: return any non-loopback IPv4
+        foreach (var ip in Dns.GetHostEntry(Dns.GetHostName()).AddressList)
+        {
+            if (ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
             {
                 return ip.ToString();
             }
         }
+
         Console.WriteLine("Error: Failed to get IPv4 address");
         return "";
     }

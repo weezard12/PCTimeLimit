@@ -14,6 +14,7 @@ using System.Net.Sockets;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
+using static PCTimeLinitShared.Consts;
 
 namespace PCTimeLimit;
 
@@ -314,8 +315,8 @@ public sealed class ClientService
 {
     private TcpClient? _client;
     private NetworkStream? _stream;
-    private readonly string _serverAddress = "127.0.0.1"; // Default to localhost
-    private readonly int _serverPort = 8888;
+    private readonly string _serverAddress = ServerIP;
+    private readonly int _serverPort = ServerPort;
     
     public bool IsConnected => _client?.Connected == true;
     

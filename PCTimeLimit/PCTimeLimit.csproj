@@ -29,4 +29,6 @@
     </None>
   </ItemGroup>
 
+  <Import Project="..\PCTimeLinitShared\PCTimeLinitShared.projitems" Label="Shared" />
+
 </Project>

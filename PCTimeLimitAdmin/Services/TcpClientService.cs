@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using PCTimeLinitShared.Messaging;
 using PCTimeLimitAdmin.Configuration;
+using static PCTimeLinitShared.Consts;
 
 namespace PCTimeLimitAdmin.Services;
 
@@ -10,8 +11,8 @@ public class TcpClientService
 {
     private TcpClient? _client;
     private NetworkStream? _stream;
-    private readonly string _serverAddress = ServerConfig.SERVER_ADDRESS;
-    private readonly int _serverPort = ServerConfig.SERVER_PORT;
+    private readonly string _serverAddress = ServerIP;
+    private readonly int _serverPort = ServerPort;
     
     public bool IsConnected => _client?.Connected == true;
     

@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.IO;
+using static PCTimeLinitShared.Consts;
 
 namespace PCTimeLimit;
 
@@ -15,8 +16,6 @@ public partial class LoginDialog : Window
     public string? AdminPassword { get; private set; }
     public bool IsAuthenticated { get; private set; } = false;
     
-    private readonly string _serverAddress = "127.0.0.1";
-    private readonly int _serverPort = 8888;
     private const int ConnectionTimeoutMs = 5000;
     private const int ReadTimeoutMs = 5000;
     private readonly string _appFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PCTimeLimit");
@@ -110,7 +109,7 @@ public partial class LoginDialog : Window
         {
             using var cts = new CancellationTokenSource(ConnectionTimeoutMs);
             using var client = new TcpClient();
-            var connectTask = client.ConnectAsync(_serverAddress, _serverPort);
+            var connectTask = client.ConnectAsync(ServerIP, ServerPort);
             var completed = await Task.WhenAny(connectTask, Task.Delay(ConnectionTimeoutMs, cts.Token));
             if (completed != connectTask)
                 throw new TimeoutException("Connection timed out");
