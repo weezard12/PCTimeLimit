@@ -170,22 +170,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		}
 	}
 
-	private void OnOpenControlPanelClick(object sender, RoutedEventArgs e)
-	{
-		var pwd = PasswordBox.Password ?? string.Empty;
-		if (_timeManager.VerifyPassword(pwd))
-		{
-			var cp = new SettingsWindow(_timeManager, _usageTracker);
-			cp.Owner = this;
-			cp.ShowDialog();
-			UpdateUi();
-		}
-		else
-		{
-			MessageBox.Show(this, "Wrong password", "Access Denied", MessageBoxButton.OK, MessageBoxImage.Error);
-		}
-	}
-
 	// Drive countdown independent of UI render
 	private void CompositionTarget_Rendering()
 	{
