@@ -27,8 +27,8 @@ namespace PCTimeLimit
         public TimesUpWindow()
         {
             InitializeComponent();
-            //PreventClosing();
-            //HookKeyboard();
+            PreventClosing();
+            HookKeyboard();
         }
 
         private void PreventClosing()
@@ -94,7 +94,7 @@ namespace PCTimeLimit
         {
             Task.Run(() =>
             {
-                while (true)
+                while (!allowClose)
                 {
                     // Check if the left or right Windows key is pressed
                     if ((GetAsyncKeyState(0x5B) & 0x8000) != 0 || // Left Windows Key (VK_LWIN)

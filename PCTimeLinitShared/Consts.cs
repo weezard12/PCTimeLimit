@@ -6,7 +6,7 @@ namespace PCTimeLinitShared
 {
     static class Consts
     {
-        public const string ServerIP = "127.0.0.1";
+        public const string ServerIP = "10.0.0.7";
         public const int ServerPort = 8888;
     }
 }

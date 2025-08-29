@@ -24,3 +24,4 @@ echo 5. Use the admin client to manage computers and set time limits.
 echo.
 echo Press any key to continue...
 pause > nul
+
