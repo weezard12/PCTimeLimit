@@ -13,5 +13,6 @@ public enum MessageType
     AcknowledgeReset = 9,
     ForceLockout = 10,
     AcknowledgeForceLockout = 11,
+		SetComputerAllowedUsage = 12,
     Error = 99
 }

@@ -364,6 +364,28 @@ public class AccountManager
         return new ComputerResult { Success = false, ErrorMessage = "Computer not found" };
     }
 
+    public ComputerResult SetComputerAllowedUsage(string computerId, string allowedUsageJson, string adminUsername)
+    {
+        if (!_accounts.TryGetValue(adminUsername, out var account) || !account.IsAdmin)
+        {
+            return new ComputerResult { Success = false, ErrorMessage = "Invalid admin account" };
+        }
+
+        if (_computers.TryGetValue(computerId, out var computer))
+        {
+            if (!string.Equals(computer.AdminUsername, adminUsername, StringComparison.OrdinalIgnoreCase))
+            {
+                return new ComputerResult { Success = false, ErrorMessage = "You can only modify computers under your control" };
+            }
+
+            computer.AllowedUsageJson = allowedUsageJson ?? string.Empty;
+            SaveComputers();
+            return new ComputerResult { Success = true, Data = computer };
+        }
+
+        return new ComputerResult { Success = false, ErrorMessage = "Computer not found" };
+    }
+
     public List<ComputerInfo> GetComputersForAdmin(string adminUsername)
     {
         if (!_accounts.TryGetValue(adminUsername, out var account) || !account.IsAdmin)
@@ -493,6 +515,7 @@ public class ComputerInfo
     public bool IsOnline { get; set; } = false;
     public bool PendingReset { get; set; } = false;
     public bool PendingForceLockout { get; set; } = false;
+    public string? AllowedUsageJson { get; set; } = "";
 }
 
 public class AccountResult

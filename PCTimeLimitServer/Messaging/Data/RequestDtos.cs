@@ -63,3 +63,10 @@ public class AcknowledgeForceLockoutData
 {
     public string ComputerId { get; set; } = "";
 }
+
+public class SetComputerAllowedUsageData
+{
+    public string ComputerId { get; set; } = "";
+    public string AllowedUsageJson { get; set; } = "";
+    public string AdminUsername { get; set; } = "";
+}

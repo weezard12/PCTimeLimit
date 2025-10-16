@@ -73,6 +73,7 @@ The system uses a TCP-based message protocol with the following message types:
 - `RegisterComputer` (4) - Register computer with admin
 - `UpdateComputerStatus` (5) - Update computer online/offline status
 - `SetComputerTimeLimit` (6) - Set daily time limit for computer
+- `SetComputerAllowedUsage` (12) - Set JSON allowed-usage windows per weekday for a computer
 - `GetComputersForAdmin` (7) - Get all computers for an admin
 
 ## File Structure
@@ -89,6 +90,7 @@ PCTimeLimit/
 - **Accounts**: Stored in `%APPDATA%\PC Time Limit Server\accounts.json`
 - **Computers**: Stored in `%APPDATA%\PC Time Limit Server\computers.json`
 - **Child App Settings**: Stored in `%APPDATA%\PCTimeLimit\`
+  - Includes `AllowedUsageJson` used to skip decrementing during allowed hours
 
 ## Security Notes
 
@@ -126,4 +128,5 @@ To modify the system:
 ## License
 
 This project is provided as-is for educational and development purposes.
+
 

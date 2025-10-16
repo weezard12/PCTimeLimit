@@ -349,6 +349,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     _timeManager.UpdateDailyLimit(state.DailyLimit.Value);
                     UpdateUi();
                 }
+                if (!string.IsNullOrWhiteSpace(state.AllowedUsageJson))
+                {
+                    _timeManager.UpdateAllowedUsage(state.AllowedUsageJson);
+                }
                 if (state.PendingReset)
                 {
                     // Reset remaining to the daily limit immediately
@@ -561,6 +565,7 @@ public sealed class ClientService
         public TimeSpan? DailyLimit { get; set; }
         public bool PendingReset { get; set; }
         public bool PendingForceLockout { get; set; }
+        public string? AllowedUsageJson { get; set; }
     }
 
     public async Task<ComputerState?> GetComputerStateAsync(string adminCode, string computerId)
@@ -609,6 +614,10 @@ public sealed class ClientService
                     {
                         state.DailyLimit = TimeSpan.FromTicks(ticks);
                     }
+                }
+                if (comp.TryGetProperty("AllowedUsageJson", out var auEl) && auEl.ValueKind == JsonValueKind.String)
+                {
+                    state.AllowedUsageJson = auEl.GetString();
                 }
                 if (comp.TryGetProperty("PendingReset", out var prEl) && prEl.ValueKind == JsonValueKind.True)
                 {
@@ -723,6 +732,7 @@ public sealed class AppSettings
 	public string Password { get; set; } = "";
 	public DateTime DateUtc { get; set; } = DateTime.Today;
 	public TimeSpan RemainingForDate { get; set; } = TimeSpan.FromHours(1);
+    public string AllowedUsageJson { get; set; } = "";
 }
 
 public sealed class UsageTracker
@@ -822,6 +832,7 @@ public sealed class UsageData
 public sealed class TimeManager
 {
 	private AppSettings _settings = new();
+    private Dictionary<DayOfWeek, List<(TimeSpan start, TimeSpan end)>> _allowedWindows = new();
 
 	public TimeSpan DailyLimit => _settings.DailyLimit;
 
@@ -852,6 +863,8 @@ public sealed class TimeManager
 		}
 
 		EnsureDate();
+        // Initialize allowed windows cache from stored JSON
+        ApplyAllowedUsageJson(_settings.AllowedUsageJson);
 	}
 
 	public void Save()
@@ -876,6 +889,45 @@ public sealed class TimeManager
 		Save();
 	}
 
+    public void UpdateAllowedUsage(string? allowedUsageJson)
+    {
+        _settings.AllowedUsageJson = allowedUsageJson ?? string.Empty;
+        ApplyAllowedUsageJson(_settings.AllowedUsageJson);
+        Save();
+    }
+
+    private void ApplyAllowedUsageJson(string? json)
+    {
+        _allowedWindows = new Dictionary<DayOfWeek, List<(TimeSpan start, TimeSpan end)>>();
+        if (string.IsNullOrWhiteSpace(json)) return;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            foreach (var kv in new[] { ("monday", DayOfWeek.Monday), ("tuesday", DayOfWeek.Tuesday), ("wednesday", DayOfWeek.Wednesday), ("thursday", DayOfWeek.Thursday), ("friday", DayOfWeek.Friday), ("saturday", DayOfWeek.Saturday), ("sunday", DayOfWeek.Sunday) })
+            {
+                if (!root.TryGetProperty(kv.Item1, out var arr) || arr.ValueKind != JsonValueKind.Array) continue;
+                var ranges = new List<(TimeSpan, TimeSpan)>();
+                foreach (var el in arr.EnumerateArray())
+                {
+                    if (el.ValueKind != JsonValueKind.Object) continue;
+                    if (!el.TryGetProperty("start", out var sEl) || !el.TryGetProperty("end", out var eEl)) continue;
+                    var sStr = sEl.GetString();
+                    var eStr = eEl.GetString();
+                    if (TimeSpan.TryParse(sStr, out var sTs) && TimeSpan.TryParse(eStr, out var eTs))
+                    {
+                        ranges.Add((sTs, eTs));
+                    }
+                }
+                if (ranges.Count > 0)
+                {
+                    _allowedWindows[kv.Item2] = ranges;
+                }
+            }
+        }
+        catch { }
+    }
+
 	public string GetPassword()
 	{
 		return _settings.Password ?? string.Empty;
@@ -891,7 +943,7 @@ public sealed class TimeManager
 			return;
 		}
 
-		if (ShouldDecrement())
+        if (ShouldDecrement())
 		{
 			_settings.RemainingForDate -= TimeSpan.FromSeconds(1);
 			if (_settings.RemainingForDate < TimeSpan.Zero)
@@ -918,7 +970,7 @@ public sealed class TimeManager
 		}
 	}
 
-	private static bool ShouldDecrement()
+    private bool ShouldDecrement()
 	{
 		// Conditions:
 		// - Session must be unlocked
@@ -941,8 +993,36 @@ public sealed class TimeManager
 			return false;
 		}
 
+        // If current time is within allowed usage windows, do NOT decrement
+        var now = DateTime.Now;
+        if (IsWithinAllowedWindow(now))
+        {
+            return false;
+        }
+
 		return true;
 	}
+
+    private bool IsWithinAllowedWindow(DateTime localNow)
+    {
+        if (_allowedWindows == null || _allowedWindows.Count == 0) return false;
+        var dow = localNow.DayOfWeek;
+        if (!_allowedWindows.TryGetValue(dow, out var ranges) || ranges == null || ranges.Count == 0) return false;
+        var timeOfDay = localNow.TimeOfDay;
+        foreach (var (start, end) in ranges)
+        {
+            if (start <= end)
+            {
+                if (timeOfDay >= start && timeOfDay <= end) return true;
+            }
+            else
+            {
+                // Overnight window, e.g., 22:00-02:00
+                if (timeOfDay >= start || timeOfDay <= end) return true;
+            }
+        }
+        return false;
+    }
 
     [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
 	[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)] private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);

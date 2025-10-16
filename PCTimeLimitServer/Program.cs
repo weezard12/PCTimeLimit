@@ -195,6 +195,9 @@ class Program
                 case MessageType.AcknowledgeForceLockout:
                     return await HandleAcknowledgeForceLockoutAsync(request, connection);
 
+                case MessageType.SetComputerAllowedUsage:
+                    return await HandleSetComputerAllowedUsageAsync(request, connection);
+
                 default:
                     return CreateErrorResponse($"Unknown message type: {request.Type}");
             }
@@ -327,6 +330,26 @@ class Program
         else
         {
             return CreateResponse(MessageType.SetComputerTimeLimit, new { Success = false, Message = result.ErrorMessage }, false);
+        }
+    }
+
+    private static async Task<string> HandleSetComputerAllowedUsageAsync(MessageRequest request, ClientConnection connection)
+    {
+        var data = JsonSerializer.Deserialize<SetComputerAllowedUsageData>(request.Data?.ToString() ?? "{}");
+        if (data == null || string.IsNullOrWhiteSpace(data.ComputerId) || string.IsNullOrWhiteSpace(data.AdminUsername))
+        {
+            return CreateErrorResponse("Computer ID and admin username are required");
+        }
+
+        var result = _accountManager.SetComputerAllowedUsage(data.ComputerId, data.AllowedUsageJson ?? string.Empty, data.AdminUsername);
+        if (result.Success)
+        {
+            Console.WriteLine($"Computer {data.ComputerId} allowed usage updated by admin {data.AdminUsername}");
+            return CreateResponse(MessageType.SetComputerAllowedUsage, new { Success = true, Message = "Allowed usage updated successfully", Computer = result.Data }, true);
+        }
+        else
+        {
+            return CreateResponse(MessageType.SetComputerAllowedUsage, new { Success = false, Message = result.ErrorMessage }, false);
         }
     }
 

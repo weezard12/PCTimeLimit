@@ -21,7 +21,19 @@ echo    cd PCTimeLimit
 echo    dotnet run
 echo.
 echo 5. Use the admin client to manage computers and set time limits.
+echo    You can also paste Allowed Usage JSON per weekday to skip counting during school hours.
+echo    Example JSON:
+echo    {
+echo      "monday": [{ "start": "08:00", "end": "15:00" }],
+echo      "tuesday": [{ "start": "08:00", "end": "15:00" }],
+echo      "wednesday": [{ "start": "08:00", "end": "15:00" }],
+echo      "thursday": [{ "start": "08:00", "end": "15:00" }],
+echo      "friday": [{ "start": "08:00", "end": "15:00" }],
+echo      "saturday": [],
+echo      "sunday": []
+echo    }
 echo.
 echo Press any key to continue...
 pause > nul
+
 

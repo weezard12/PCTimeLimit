@@ -51,3 +51,10 @@ public class AcknowledgeResetData
 {
     public string ComputerId { get; set; } = "";
 }
+
+public class SetComputerAllowedUsageData
+{
+    public string ComputerId { get; set; } = "";
+    public string AllowedUsageJson { get; set; } = ""; // JSON object describing allowed windows per weekday
+    public string AdminUsername { get; set; } = "";
+}

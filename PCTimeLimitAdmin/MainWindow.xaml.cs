@@ -219,6 +219,8 @@ public partial class MainWindow : Window
             UpdateTimeLimitButton.IsEnabled = true;
             ResetTimerButton.IsEnabled = true;
             SetZeroButton.IsEnabled = true;
+            AllowedUsageTextBox.Text = _selectedComputer.AllowedUsageJson ?? string.Empty;
+            UpdateAllowedUsageButton.IsEnabled = true;
         }
         else
         {
@@ -226,6 +228,7 @@ public partial class MainWindow : Window
             UpdateTimeLimitButton.IsEnabled = false;
             ResetTimerButton.IsEnabled = false;
             SetZeroButton.IsEnabled = false;
+            UpdateAllowedUsageButton.IsEnabled = false;
         }
     }
     
@@ -280,6 +283,47 @@ public partial class MainWindow : Window
         {
             StatusText.Text = $"Error updating time limit: {ex.Message}";
             MessageBox.Show($"Error updating time limit: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void UpdateAllowedUsageButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComputer == null) return;
+        var editor = new AllowedUsageWindow(AllowedUsageTextBox.Text);
+        editor.Owner = this;
+        var ok = editor.ShowDialog();
+        if (ok != true) return;
+        var json = editor.ResultJson ?? "{}";
+        AllowedUsageTextBox.Text = json;
+        if (_tcpClient?.IsConnected != true) return;
+        try
+        {
+            var request = new
+            {
+                Type = 12, // SetComputerAllowedUsage
+                Data = new
+                {
+                    ComputerId = _selectedComputer.ComputerId,
+                    AllowedUsageJson = json,
+                    AdminUsername = _loggedInUsername
+                }
+            };
+
+            var response = await _tcpClient.SendMessageAsync(request);
+            if (response?.Success == true)
+            {
+                _selectedComputer.AllowedUsageJson = json;
+                ComputersDataGrid.Items.Refresh();
+                StatusText.Text = $"Updated allowed usage for {_selectedComputer.ComputerName}.";
+            }
+            else
+            {
+                StatusText.Text = $"Failed to update allowed usage.";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Error updating allowed usage: {ex.Message}";
         }
     }
     
@@ -420,4 +464,5 @@ public class ComputerInfo
     public DateTime LastSeen { get; set; }
     public bool IsOnline { get; set; } = false;
     public bool PendingReset { get; set; } = false;
+    public string? AllowedUsageJson { get; set; }
 }
