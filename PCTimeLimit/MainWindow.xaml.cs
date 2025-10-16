@@ -27,6 +27,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private string? _computerId;
 	private ClientService? _clientService;
 	private TimeSpan? _serverDailyLimitPending;
+	private string? _serverAllowedUsagePending;
 	private DispatcherTimer? _syncTimer;
 	private bool _syncInProgress;
 	private DispatcherTimer? _reconnectTimer;
@@ -72,6 +73,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 			_timeManager.UpdateDailyLimit(_serverDailyLimitPending.Value);
 			_serverDailyLimitPending = null;
 		}
+		// If server provided allowed usage during registration, apply it now
+		if (!string.IsNullOrWhiteSpace(_serverAllowedUsagePending))
+		{
+			_timeManager.UpdateAllowedUsage(_serverAllowedUsagePending);
+			_serverAllowedUsagePending = null;
+		}
 
 		_usageTracker = new UsageTracker();
 		_usageTracker.Load();
@@ -114,8 +121,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 					_clientService = clientService;
 					// Persist for next startup
 					SaveClientSettings(new ClientSettings { AdminCode = adminCode, ComputerId = computerId });
-					// Capture server-provided daily limit (applied after TimeManager is created)
+					// Capture server-provided settings (applied after TimeManager is created)
 					_serverDailyLimitPending = regResult.DailyLimit;
+					_serverAllowedUsagePending = regResult.AllowedUsageJson;
 					
 					// Start periodic status updates
 					StartStatusUpdates();
@@ -225,7 +233,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private void StartSyncTimer()
 	{
 		_syncTimer?.Stop();
-		_syncTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _syncTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
 		_syncTimer.Tick += async (_, _) =>
 		{
 			await SyncDailyLimitFromServerAsync("poll");
@@ -238,7 +246,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private void UpdateUi()
 	{
 		RemainingTimeText.Text = _timeManager.Remaining.ToString();
-		if(_timeManager.Remaining > TimeSpan.Zero)
+        // Close lockout while within allowed windows as well
+        if(_timeManager.Remaining > TimeSpan.Zero || _timeManager.IsWithinAllowedWindow(DateTime.Now))
 		{
 			if(timesUpWindow != null)
 			{
@@ -254,8 +263,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
 		timer.Tick += (_, _) =>
 		{
-			_timeManager.TickOneSecond();
-			if (_timeManager.Remaining <= TimeSpan.Zero)
+            _timeManager.TickOneSecond();
+            // If we're within an allowed window, never trigger lockout or decrement
+            if (_timeManager.IsWithinAllowedWindow(DateTime.Now))
+            {
+                UpdateUi();
+                return;
+            }
+            if (_timeManager.Remaining <= TimeSpan.Zero)
 			{
 				_timeManager.Remaining = TimeSpan.Zero;
 				UpdateUi();
@@ -401,10 +416,11 @@ public sealed class ClientService
         }
     }
     
-    public sealed class RegisterComputerResult
+		public sealed class RegisterComputerResult
     {
         public bool Success { get; set; }
         public TimeSpan DailyLimit { get; set; }
+			public string? AllowedUsageJson { get; set; }
     }
 
     public async Task<RegisterComputerResult> RegisterComputerAsync(string computerId, string computerName, string adminCode)
@@ -434,14 +450,15 @@ public sealed class ClientService
             var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
             var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
             
-            // Expected response schema from server:
-            // { Type, Success, Data: { Success, Message, Computer: { DailyTimeLimit: "hh:mm:ss", ... } } }
+				// Expected response schema from server:
+				// { Type, Success, Data: { Success, Message, Computer: { DailyTimeLimit: "hh:mm:ss", AllowedUsageJson: "{...}", ... } } }
             try
             {
                 using var doc = JsonDocument.Parse(response);
                 var root = doc.RootElement;
                 var success = root.TryGetProperty("Success", out var topSuccess) && topSuccess.GetBoolean();
-                TimeSpan limit = TimeSpan.Zero;
+				TimeSpan limit = TimeSpan.Zero;
+				string? allowed = null;
                 if (root.TryGetProperty("Data", out var dataEl))
                 {
                     if (dataEl.ValueKind == JsonValueKind.Object)
@@ -457,10 +474,14 @@ public sealed class ClientService
                                     TimeSpan.TryParse(s, out limit);
                                 }
                             }
+							if (compEl.TryGetProperty("AllowedUsageJson", out var auEl))
+							{
+								allowed = auEl.GetString();
+							}
                         }
                     }
                 }
-                return new RegisterComputerResult { Success = success, DailyLimit = limit };
+				return new RegisterComputerResult { Success = success, DailyLimit = limit, AllowedUsageJson = allowed };
             }
             catch
             {
@@ -938,6 +959,11 @@ public sealed class TimeManager
 		// Ensure daily reset at local midnight; this also handles the case when the PC was off
 		// because we compare the stored date against today's date on every tick and on Load().
 		EnsureDate();
+		// If we are within an allowed usage window, pause the timer entirely
+		if (IsWithinAllowedWindow(DateTime.Now))
+		{
+			return;
+		}
 		if (_settings.RemainingForDate <= TimeSpan.Zero)
 		{
 			return;
@@ -1003,7 +1029,7 @@ public sealed class TimeManager
 		return true;
 	}
 
-    private bool IsWithinAllowedWindow(DateTime localNow)
+    public bool IsWithinAllowedWindow(DateTime localNow)
     {
         if (_allowedWindows == null || _allowedWindows.Count == 0) return false;
         var dow = localNow.DayOfWeek;

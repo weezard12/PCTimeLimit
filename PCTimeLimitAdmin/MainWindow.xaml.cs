@@ -219,8 +219,8 @@ public partial class MainWindow : Window
             UpdateTimeLimitButton.IsEnabled = true;
             ResetTimerButton.IsEnabled = true;
             SetZeroButton.IsEnabled = true;
-            AllowedUsageTextBox.Text = _selectedComputer.AllowedUsageJson ?? string.Empty;
-            UpdateAllowedUsageButton.IsEnabled = true;
+            AdvancedScheduleCheckBox.IsChecked = !string.IsNullOrWhiteSpace(_selectedComputer.AllowedUsageJson);
+            UpdateAllowedUsageButton.IsEnabled = AdvancedScheduleCheckBox.IsChecked == true;
         }
         else
         {
@@ -289,12 +289,11 @@ public partial class MainWindow : Window
     private async void UpdateAllowedUsageButton_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedComputer == null) return;
-        var editor = new AllowedUsageWindow(AllowedUsageTextBox.Text);
+        var editor = new AllowedUsageWindow(_selectedComputer.AllowedUsageJson);
         editor.Owner = this;
         var ok = editor.ShowDialog();
         if (ok != true) return;
-        var json = editor.ResultJson ?? "{}";
-        AllowedUsageTextBox.Text = json;
+        var json = editor.ResultJson ?? "";
         if (_tcpClient?.IsConnected != true) return;
         try
         {
@@ -324,6 +323,51 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             StatusText.Text = $"Error updating allowed usage: {ex.Message}";
+        }
+    }
+
+    private async void AdvancedScheduleCheckBox_Checked(object sender, RoutedEventArgs e)
+    {
+        UpdateAllowedUsageButton.IsEnabled = true;
+        // If enabling and no JSON exists yet, prefill default example
+        if (_selectedComputer != null && string.IsNullOrWhiteSpace(_selectedComputer.AllowedUsageJson))
+        {
+            _selectedComputer.AllowedUsageJson = PCTimeLinitShared.Consts.AllowedUsageJsonExample;
+            if (_tcpClient?.IsConnected == true)
+            {
+                var request = new
+                {
+                    Type = 12,
+                    Data = new
+                    {
+                        ComputerId = _selectedComputer.ComputerId,
+                        AllowedUsageJson = _selectedComputer.AllowedUsageJson,
+                        AdminUsername = _loggedInUsername
+                    }
+                };
+                await _tcpClient.SendMessageAsync(request);
+            }
+        }
+    }
+
+    private async void AdvancedScheduleCheckBox_Unchecked(object sender, RoutedEventArgs e)
+    {
+        UpdateAllowedUsageButton.IsEnabled = false;
+        if (_selectedComputer == null) return;
+        _selectedComputer.AllowedUsageJson = string.Empty;
+        if (_tcpClient?.IsConnected == true)
+        {
+            var request = new
+            {
+                Type = 12,
+                Data = new
+                {
+                    ComputerId = _selectedComputer.ComputerId,
+                    AllowedUsageJson = "",
+                    AdminUsername = _loggedInUsername
+                }
+            };
+            await _tcpClient.SendMessageAsync(request);
         }
     }
     

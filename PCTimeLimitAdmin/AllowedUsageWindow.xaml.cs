@@ -9,15 +9,16 @@ namespace PCTimeLimitAdmin
 {
     public partial class AllowedUsageWindow : Window
     {
+        private static readonly string[] OrderedDays = new[] { "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday" };
         private readonly Dictionary<string, List<(TimeSpan start, TimeSpan end)>> _model = new(StringComparer.OrdinalIgnoreCase)
         {
+            { "sunday", new() },
             { "monday", new() },
             { "tuesday", new() },
             { "wednesday", new() },
             { "thursday", new() },
             { "friday", new() },
             { "saturday", new() },
-            { "sunday", new() },
         };
 
         public string? ResultJson { get; private set; }
@@ -38,7 +39,7 @@ namespace PCTimeLimitAdmin
             {
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
-                foreach (var day in _model.Keys.ToList())
+                foreach (var day in OrderedDays)
                 {
                     if (!root.TryGetProperty(day, out var arr) || arr.ValueKind != JsonValueKind.Array) continue;
                     var list = new List<(TimeSpan, TimeSpan)>();
@@ -62,22 +63,24 @@ namespace PCTimeLimitAdmin
         private void BuildUi()
         {
             DaysPanel.Children.Clear();
-            foreach (var kv in _model)
+            foreach (var key in OrderedDays)
             {
-                var dayName = char.ToUpper(kv.Key[0]) + kv.Key.Substring(1);
+                _model.TryGetValue(key, out var rangesForDay);
+                rangesForDay ??= new List<(TimeSpan, TimeSpan)>();
+                var dayName = char.ToUpper(key[0]) + key.Substring(1);
                 var dayBlock = new GroupBox { Header = dayName, Margin = new Thickness(0, 0, 0, 10) };
                 var stack = new StackPanel { Margin = new Thickness(8) };
 
                 var itemsPanel = new StackPanel { Orientation = Orientation.Vertical };
-                foreach (var (start, end) in kv.Value)
+                foreach (var (start, end) in rangesForDay)
                 {
-                    itemsPanel.Children.Add(CreateRangeRow(kv.Key, start, end));
+                    itemsPanel.Children.Add(CreateRangeRow(key, start, end));
                 }
 
                 var addBtn = new Button { Content = "Add Range", Width = 100, Height = 24, Margin = new Thickness(0, 5, 0, 0) };
                 addBtn.Click += (s, e) =>
                 {
-                    itemsPanel.Children.Add(CreateRangeRow(kv.Key, TimeSpan.FromHours(8), TimeSpan.FromHours(15)));
+                    itemsPanel.Children.Add(CreateRangeRow(key, TimeSpan.FromHours(8), TimeSpan.FromHours(15)));
                 };
 
                 stack.Children.Add(itemsPanel);
