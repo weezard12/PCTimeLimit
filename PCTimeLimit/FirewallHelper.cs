@@ -1,12 +1,10 @@
-using NetFwTypeLib;
+using WindowsFirewallHelper;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
-namespace PCTimeLimitAdmin
+namespace PCTimeLimit
 {
     /// <summary>
     /// Provides utilities for checking and managing Windows Firewall rules.
@@ -26,34 +24,53 @@ namespace PCTimeLimitAdmin
                 var currentExePath = Process.GetCurrentProcess().MainModule?.FileName;
                 if (string.IsNullOrEmpty(currentExePath)) return true;
 
-                Type tNetFwPolicy2 = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
-                if (tNetFwPolicy2 == null) return false;
+                // Check if firewall is enabled on any profile
+                bool isFirewallEnabled = FirewallManager.Instance.Profiles.Any(p => p.IsActive && p.Enable);
 
-                INetFwPolicy2 fwPolicy2 = (INetFwPolicy2)Activator.CreateInstance(tNetFwPolicy2);
-
-                // Check if firewall is enabled
-                if (!fwPolicy2.FirewallEnabled[NET_FW_PROFILE_TYPE2_.NET_FW_PROFILE2_DOMAIN] &&
-                    !fwPolicy2.FirewallEnabled[NET_FW_PROFILE_TYPE2_.NET_FW_PROFILE2_PRIVATE] &&
-                    !fwPolicy2.FirewallEnabled[NET_FW_PROFILE_TYPE2_.NET_FW_PROFILE2_PUBLIC])
+                if (!isFirewallEnabled)
                 {
                     // Firewall is disabled, so port is not blocked
                     return false;
                 }
 
+                var protocolType = GetProtocolType(protocol);
+
                 // Check if there's an existing rule allowing THIS APPLICATION on this port
-                foreach (INetFwRule rule in fwPolicy2.Rules)
+                foreach (var rule in FirewallManager.Instance.Rules)
                 {
-                    if (rule.Enabled &&
-                        rule.Action == NET_FW_ACTION_.NET_FW_ACTION_ALLOW &&
-                        rule.Protocol == GetProtocolNumber(protocol))
+                    if (rule.IsEnable && rule.Action == FirewallAction.Allow)
                     {
                         // Check if the rule applies to our application
-                        bool isForOurApp = !string.IsNullOrEmpty(rule.ApplicationName) &&
-                                          rule.ApplicationName.Equals(currentExePath, StringComparison.OrdinalIgnoreCase);
+                        bool isForOurApp = false;
+                        bool appliesToPort = false;
 
-                        // Check if the rule applies to our port (or all ports)
-                        bool appliesToPort = string.IsNullOrEmpty(rule.LocalPorts) || // Empty means all ports
-                                           rule.LocalPorts.Split(',').Any(p => p.Trim() == port.ToString());
+                        // Check application name
+                        try
+                        {
+                            var appName = rule.GetType().GetProperty("ApplicationName")?.GetValue(rule) as string;
+                            isForOurApp = !string.IsNullOrEmpty(appName) &&
+                                         appName.Equals(currentExePath, StringComparison.OrdinalIgnoreCase);
+                        }
+                        catch { }
+
+                        // Check port and protocol
+                        try
+                        {
+                            var ruleProtocol = rule.GetType().GetProperty("Protocol")?.GetValue(rule);
+                            var localPorts = rule.GetType().GetProperty("LocalPorts")?.GetValue(rule) as ushort[];
+
+                            if (ruleProtocol != null && localPorts != null)
+                            {
+                                appliesToPort = ruleProtocol.Equals(protocolType) &&
+                                              localPorts.Contains((ushort)port);
+                            }
+                            else if (ruleProtocol != null && localPorts == null)
+                            {
+                                // No specific ports means all ports
+                                appliesToPort = true;
+                            }
+                        }
+                        catch { }
 
                         if (isForOurApp && appliesToPort)
                         {
@@ -83,28 +100,29 @@ namespace PCTimeLimitAdmin
                 var currentExePath = Process.GetCurrentProcess().MainModule?.FileName;
                 if (string.IsNullOrEmpty(currentExePath)) return true;
 
-                Type tNetFwPolicy2 = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
-                if (tNetFwPolicy2 == null) return true;
-
-                INetFwPolicy2 fwPolicy2 = (INetFwPolicy2)Activator.CreateInstance(tNetFwPolicy2);
-
                 // Check if firewall is enabled
-                if (!fwPolicy2.FirewallEnabled[NET_FW_PROFILE_TYPE2_.NET_FW_PROFILE2_DOMAIN] &&
-                    !fwPolicy2.FirewallEnabled[NET_FW_PROFILE_TYPE2_.NET_FW_PROFILE2_PRIVATE] &&
-                    !fwPolicy2.FirewallEnabled[NET_FW_PROFILE_TYPE2_.NET_FW_PROFILE2_PUBLIC])
+                bool isFirewallEnabled = FirewallManager.Instance.Profiles.Any(p => p.IsActive && p.Enable);
+
+                if (!isFirewallEnabled)
                 {
                     return false; // Firewall disabled
                 }
 
                 // Check if there's a rule for this application
-                foreach (INetFwRule rule in fwPolicy2.Rules)
+                foreach (var rule in FirewallManager.Instance.Rules)
                 {
-                    if (rule.Enabled &&
-                        rule.Action == NET_FW_ACTION_.NET_FW_ACTION_ALLOW &&
-                        !string.IsNullOrEmpty(rule.ApplicationName) &&
-                        rule.ApplicationName.Equals(currentExePath, StringComparison.OrdinalIgnoreCase))
+                    if (rule.IsEnable && rule.Action == FirewallAction.Allow)
                     {
-                        return false; // App is allowed
+                        try
+                        {
+                            var appName = rule.GetType().GetProperty("ApplicationName")?.GetValue(rule) as string;
+                            if (!string.IsNullOrEmpty(appName) &&
+                                appName.Equals(currentExePath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                return false; // App is allowed
+                            }
+                        }
+                        catch { }
                     }
                 }
 
@@ -118,160 +136,127 @@ namespace PCTimeLimitAdmin
 
         /// <summary>
         /// Adds a firewall rule to allow the current application to communicate on the specified port.
-        /// This method requires administrator privileges and will trigger a UAC prompt.
+        /// This method requires administrator privileges.
         /// </summary>
         /// <param name="port">The port number to allow.</param>
         /// <param name="ruleName">The name for the firewall rule.</param>
         /// <param name="protocol">The protocol (TCP or UDP). Default is TCP.</param>
         /// <param name="direction">The direction (IN or OUT). Default is OUT.</param>
         /// <returns>True if the rule was added successfully, false otherwise.</returns>
-        public static async Task<bool> AddFirewallRuleAsync(int port, string ruleName, string protocol = "TCP", string direction = "OUT")
+        public static Task<bool> AddFirewallRuleAsync(int port, string ruleName, string protocol = "TCP", string direction = "OUT")
         {
             try
             {
                 var currentExePath = Process.GetCurrentProcess().MainModule?.FileName;
                 if (string.IsNullOrEmpty(currentExePath))
                 {
-                    return false;
+                    return Task.FromResult(false);
                 }
 
-                // Build the netsh command to add firewall rule
-                var arguments = $"advfirewall firewall add rule " +
-                              $"name=\"{ruleName}\" " +
-                              $"dir={direction} " +
-                              $"action=allow " +
-                              $"protocol={protocol} " +
-                              $"localport={port} " +
-                              $"program=\"{currentExePath}\" " +
-                              $"enable=yes";
+                var protocolType = GetProtocolType(protocol);
+                var directionType = direction.ToUpperInvariant() == "IN"
+                    ? FirewallDirection.Inbound
+                    : FirewallDirection.Outbound;
 
-                var processInfo = new ProcessStartInfo
+                var rule = FirewallManager.Instance.CreatePortRule(
+                    ruleName,
+                    FirewallAction.Allow,
+                    (ushort)port,
+                    protocolType
+                );
+
+                rule.Direction = directionType;
+
+                // Associate with the application using reflection
+                try
                 {
-                    FileName = "netsh",
-                    Arguments = arguments,
-                    Verb = "runas", // This triggers the UAC prompt
-                    UseShellExecute = true,
-                    CreateNoWindow = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
+                    var appNameProperty = rule.GetType().GetProperty("ApplicationName");
+                    if (appNameProperty != null && appNameProperty.CanWrite)
+                    {
+                        appNameProperty.SetValue(rule, currentExePath);
+                    }
+                }
+                catch { }
 
-                using var process = Process.Start(processInfo);
-                if (process == null) return false;
-
-                await process.WaitForExitAsync();
-                return process.ExitCode == 0;
-            }
-            catch (System.ComponentModel.Win32Exception)
-            {
-                // User cancelled the UAC prompt
-                return false;
+                FirewallManager.Instance.Rules.Add(rule);
+                return Task.FromResult(true);
             }
             catch
             {
-                return false;
+                return Task.FromResult(false);
             }
         }
 
         /// <summary>
         /// Adds a firewall rule to allow the current application to communicate freely (all ports).
-        /// This method requires administrator privileges and will trigger a UAC prompt.
+        /// This method requires administrator privileges.
         /// </summary>
         /// <param name="ruleName">The name for the firewall rule.</param>
         /// <returns>True if the rule was added successfully, false otherwise.</returns>
-        public static async Task<bool> AddApplicationFirewallRuleAsync(string ruleName)
+        public static Task<bool> AddApplicationFirewallRuleAsync(string ruleName)
         {
             try
             {
                 var currentExePath = Process.GetCurrentProcess().MainModule?.FileName;
                 if (string.IsNullOrEmpty(currentExePath))
                 {
-                    return false;
+                    return Task.FromResult(false);
                 }
 
-                // Build the netsh command to add firewall rule for the application
-                var arguments = $"advfirewall firewall add rule " +
-                              $"name=\"{ruleName}\" " +
-                              $"dir=out " +
-                              $"action=allow " +
-                              $"program=\"{currentExePath}\" " +
-                              $"enable=yes";
+                var rule = FirewallManager.Instance.CreateApplicationRule(
+                    ruleName,
+                    FirewallAction.Allow,
+                    currentExePath
+                );
 
-                var processInfo = new ProcessStartInfo
-                {
-                    FileName = "netsh",
-                    Arguments = arguments,
-                    Verb = "runas", // This triggers the UAC prompt
-                    UseShellExecute = true,
-                    CreateNoWindow = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
+                rule.Direction = FirewallDirection.Outbound;
 
-                using var process = Process.Start(processInfo);
-                if (process == null) return false;
-
-                await process.WaitForExitAsync();
-                return process.ExitCode == 0;
-            }
-            catch (System.ComponentModel.Win32Exception)
-            {
-                // User cancelled the UAC prompt
-                return false;
+                FirewallManager.Instance.Rules.Add(rule);
+                return Task.FromResult(true);
             }
             catch
             {
-                return false;
+                return Task.FromResult(false);
             }
         }
 
         /// <summary>
         /// Removes a firewall rule by name.
-        /// This method requires administrator privileges and will trigger a UAC prompt.
+        /// This method requires administrator privileges.
         /// </summary>
         /// <param name="ruleName">The name of the firewall rule to remove.</param>
         /// <returns>True if the rule was removed successfully, false otherwise.</returns>
-        public static async Task<bool> RemoveFirewallRuleAsync(string ruleName)
+        public static Task<bool> RemoveFirewallRuleAsync(string ruleName)
         {
             try
             {
-                var arguments = $"advfirewall firewall delete rule name=\"{ruleName}\"";
+                var rulesToRemove = FirewallManager.Instance.Rules
+                    .Where(r => r.Name.Equals(ruleName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
 
-                var processInfo = new ProcessStartInfo
+                foreach (var rule in rulesToRemove)
                 {
-                    FileName = "netsh",
-                    Arguments = arguments,
-                    Verb = "runas", // This triggers the UAC prompt
-                    UseShellExecute = true,
-                    CreateNoWindow = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
+                    FirewallManager.Instance.Rules.Remove(rule);
+                }
 
-                using var process = Process.Start(processInfo);
-                if (process == null) return false;
-
-                await process.WaitForExitAsync();
-                return process.ExitCode == 0;
-            }
-            catch (System.ComponentModel.Win32Exception)
-            {
-                // User cancelled the UAC prompt
-                return false;
+                return Task.FromResult(rulesToRemove.Count > 0);
             }
             catch
             {
-                return false;
+                return Task.FromResult(false);
             }
         }
 
         /// <summary>
-        /// Gets the protocol number for TCP or UDP.
+        /// Gets the FirewallProtocol enum value for TCP or UDP.
         /// </summary>
-        private static int GetProtocolNumber(string protocol)
+        private static FirewallProtocol GetProtocolType(string protocol)
         {
             return protocol.ToUpperInvariant() switch
             {
-                "TCP" => 6,
-                "UDP" => 17,
-                _ => 6 // Default to TCP
+                "TCP" => FirewallProtocol.TCP,
+                "UDP" => FirewallProtocol.UDP,
+                _ => FirewallProtocol.TCP // Default to TCP
             };
         }
     }

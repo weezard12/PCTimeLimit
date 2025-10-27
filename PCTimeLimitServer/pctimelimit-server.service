@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 Type=notify
-User=%i
+User=ubuntu
 WorkingDirectory=/opt/pctimelimit-server
-ExecStart=/opt/pctimelimit-server/PCTimeLimitServer
+ExecStart=/home/ubuntu/Desktop/PCTimeLimitServer
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -15,9 +15,8 @@ StandardError=journal
 # Security settings for Ubuntu
 NoNewPrivileges=yes
 PrivateTmp=yes
-ProtectSystem=strict
+ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/home/%i/.local/share/PC Time Limit Server
 
 # Performance and resource limits
 LimitNOFILE=65536
