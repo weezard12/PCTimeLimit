@@ -3,12 +3,17 @@ using System.Text.Json;
 
 namespace PCTimeLimitServer;
 
-public class AccountManager
+public class AccountManager : IDisposable
 {
     private readonly string _accountsFilePath;
     private readonly string _computersFilePath;
     private readonly Dictionary<string, Account> _accounts;
     private readonly Dictionary<string, ComputerInfo> _computers;
+    private DateTime _lastAccountsSave = DateTime.UtcNow;
+    private DateTime _lastComputersSave = DateTime.UtcNow;
+    private readonly TimeSpan SaveInterval = TimeSpan.FromMinutes(1); // Batch saves every minute
+    private readonly System.Threading.Timer _saveTimer;
+    private readonly object _saveLock = new object();
     
     public AccountManager()
     {
@@ -23,6 +28,33 @@ public class AccountManager
         _computersFilePath = Path.Combine(appDataPath, "computers.json");
         _accounts = new Dictionary<string, Account>(StringComparer.OrdinalIgnoreCase);
         _computers = new Dictionary<string, ComputerInfo>(StringComparer.OrdinalIgnoreCase);
+        
+        // Start periodic save timer for efficient batching
+        _saveTimer = new System.Threading.Timer(SaveTimerCallback, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+    }
+    
+    private void SaveTimerCallback(object? state)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+            
+            if (now - _lastAccountsSave >= SaveInterval)
+            {
+                SaveAccountsInternal();
+                _lastAccountsSave = now;
+            }
+            
+            if (now - _lastComputersSave >= SaveInterval)
+            {
+                SaveComputersInternal();
+                _lastComputersSave = now;
+            }
+        }
+        catch
+        {
+            // Ignore timer errors
+        }
     }
     
     public void LoadAccounts()
@@ -120,31 +152,47 @@ public class AccountManager
     
     public void SaveAccounts()
     {
-        try
+        SaveAccountsInternal();
+    }
+    
+    private void SaveAccountsInternal()
+    {
+        lock (_saveLock)
         {
-            var accounts = _accounts.Values.ToList();
-            var json = JsonSerializer.Serialize(accounts, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(_accountsFilePath, json);
-            Console.WriteLine($"Saved {_accounts.Count} accounts to {_accountsFilePath}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error saving accounts: {ex.Message}");
+            try
+            {
+                var accounts = _accounts.Values.ToList();
+                var json = JsonSerializer.Serialize(accounts, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(_accountsFilePath, json);
+                _lastAccountsSave = DateTime.UtcNow;
+            }
+            catch (Exception ex)
+            {
+                // Silently handle save errors - data is in memory and will retry
+            }
         }
     }
 
     public void SaveComputers()
     {
-        try
+        SaveComputersInternal();
+    }
+    
+    private void SaveComputersInternal()
+    {
+        lock (_saveLock)
         {
-            var computers = _computers.Values.ToList();
-            var json = JsonSerializer.Serialize(computers, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(_computersFilePath, json);
-            Console.WriteLine($"Saved {_computers.Count} computers to {_computersFilePath}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error saving computers: {ex.Message}");
+            try
+            {
+                var computers = _computers.Values.ToList();
+                var json = JsonSerializer.Serialize(computers, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(_computersFilePath, json);
+                _lastComputersSave = DateTime.UtcNow;
+            }
+            catch (Exception ex)
+            {
+                // Silently handle save errors - data is in memory and will retry
+            }
         }
     }
     
@@ -339,6 +387,20 @@ public class AccountManager
             return new ComputerResult { Success = true, Data = computer };
         }
         return new ComputerResult { Success = false, ErrorMessage = "Computer not found" };
+    }
+    
+    public void Dispose()
+    {
+        try
+        {
+            _saveTimer?.Dispose();
+            SaveAccountsInternal();
+            SaveComputersInternal();
+        }
+        catch
+        {
+            // Ignore disposal errors
+        }
     }
 
     public ComputerResult SetComputerTimeLimit(string computerId, TimeSpan timeLimit, string adminUsername)

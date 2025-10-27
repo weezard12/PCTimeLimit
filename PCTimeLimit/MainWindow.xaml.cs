@@ -104,6 +104,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	{
 		try
 		{
+			// Check and handle firewall before attempting connection
+			await CheckAndHandleFirewallAsync();
+			
 			// Generate unique computer ID
 			var computerId = Environment.MachineName + "_" + Environment.UserName;
 			var computerName = Environment.MachineName;
@@ -168,6 +171,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		try
 		{
 			if (_clientService?.IsConnected == true) return;
+			
+			// Check and handle firewall before reconnection attempt
+			await CheckAndHandleFirewallAsync();
+			
 			var client = new ClientService();
 			if (!await client.ConnectAsync()) return;
 			var reg = await client.RegisterComputerAsync(computerId, computerName, adminCode);
@@ -390,6 +397,55 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         catch { }
         finally { _syncInProgress = false; }
     }
+
+	private async Task CheckAndHandleFirewallAsync()
+	{
+		try
+		{
+			// Check if the port is blocked by firewall
+			if (FirewallHelper.IsPortBlocked(ServerPort))
+			{
+				var result = MessageBox.Show(
+					$"Windows Firewall may be blocking communication on port {ServerPort}.\n\n" +
+					"Would you like to add a firewall rule to allow this application?\n\n" +
+					"This will require administrator privileges.",
+					"Firewall Configuration",
+					MessageBoxButton.YesNo,
+					MessageBoxImage.Question);
+
+				if (result == MessageBoxResult.Yes)
+				{
+					var success = await FirewallHelper.AddFirewallRuleAsync(
+						ServerPort,
+						"PCTimeLimit Client",
+						"TCP",
+						"OUT");
+
+					if (success)
+					{
+						MessageBox.Show(
+							"Firewall rule added successfully. The application can now communicate with the server.",
+							"Firewall Configuration",
+							MessageBoxButton.OK,
+							MessageBoxImage.Information);
+					}
+					else
+					{
+						MessageBox.Show(
+							"Failed to add firewall rule. You may need to manually configure Windows Firewall.\n\n" +
+							"The application will continue in offline mode.",
+							"Firewall Configuration Failed",
+							MessageBoxButton.OK,
+							MessageBoxImage.Warning);
+					}
+				}
+			}
+		}
+		catch
+		{
+			// If we can't check firewall status, proceed anyway
+		}
+	}
 }
 
 public sealed class ClientService

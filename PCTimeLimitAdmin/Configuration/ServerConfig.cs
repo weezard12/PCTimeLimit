@@ -2,9 +2,6 @@ namespace PCTimeLimitAdmin.Configuration;
 
 public static class ServerConfig
 {
-    // Server connection settings
-    public const string SERVER_ADDRESS = "localhost";
-    public const int SERVER_PORT = 8888;
     
     // Connection timeout settings
     public const int CONNECTION_TIMEOUT_MS = 5000;

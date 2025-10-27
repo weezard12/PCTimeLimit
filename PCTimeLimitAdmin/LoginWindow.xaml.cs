@@ -2,6 +2,7 @@ using System.Windows;
 using System.Text.Json;
 using PCTimeLimitAdmin.Services;
 using PCTimeLimitAdmin.Configuration;
+using PCTimeLinitShared;
 
 namespace PCTimeLimitAdmin;
 
@@ -20,7 +21,7 @@ public partial class LoginWindow : Window
     private void LoginWindow_Loaded(object sender, RoutedEventArgs e)
     {
         // Set server info text
-        ServerInfoTextBlock.Text = $"Connecting to {ServerConfig.SERVER_ADDRESS}:{ServerConfig.SERVER_PORT}";
+        ServerInfoTextBlock.Text = $"Connecting to {Consts.ServerIP}:{Consts.ServerPort}";
         
         // Set focus to username field
         UsernameTextBox.Focus();
@@ -47,6 +48,13 @@ public partial class LoginWindow : Window
         
         try
         {
+            // Check firewall before attempting connection
+            if (!await CheckAndHandleFirewallAsync())
+            {
+                SetStatus("Firewall configuration cancelled", false);
+                return;
+            }
+            
             var username = UsernameTextBox.Text.Trim();
             var password = PasswordBox.Password;
             
@@ -132,6 +140,13 @@ public partial class LoginWindow : Window
         
         try
         {
+            // Check firewall before attempting connection
+            if (!await CheckAndHandleFirewallAsync())
+            {
+                SetStatus("Firewall configuration cancelled", false);
+                return;
+            }
+            
             var username = UsernameTextBox.Text.Trim();
             var password = PasswordBox.Password;
             
@@ -262,6 +277,61 @@ public partial class LoginWindow : Window
         StatusTextBlock.Foreground = isSuccess ? 
             System.Windows.Media.Brushes.Green : 
             System.Windows.Media.Brushes.Red;
+    }
+    
+    private async Task<bool> CheckAndHandleFirewallAsync()
+    {
+        try
+        {
+            // Check if the port is blocked by firewall
+            if (FirewallHelper.IsPortBlocked(Consts.ServerPort))
+            {
+                var result = MessageBox.Show(
+                    $"Windows Firewall may be blocking communication on port {Consts.ServerPort}.\n\n" +
+                    "Would you like to add a firewall rule to allow this application?\n\n" +
+                    "This will require administrator privileges.",
+                    "Firewall Configuration",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    SetStatus("Adding firewall rule...", false);
+                    var success = await FirewallHelper.AddFirewallRuleAsync(
+                        Consts.ServerPort,
+                        "PCTimeLimit Admin Client",
+                        "TCP",
+                        "OUT");
+
+                    if (success)
+                    {
+                        SetStatus("Firewall rule added successfully", true);
+                        await Task.Delay(1000);
+                        return true;
+                    }
+                    else
+                    {
+                        MessageBox.Show(
+                            "Failed to add firewall rule. You may need to manually configure Windows Firewall.",
+                            "Firewall Configuration Failed",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                        return false;
+                    }
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            
+            return true; // Firewall not blocking or already configured
+        }
+        catch
+        {
+            // If we can't check firewall status, proceed anyway
+            return true;
+        }
     }
     
     protected override void OnClosed(EventArgs e)
