@@ -502,7 +502,7 @@ public sealed class ClientService
             await _stream!.WriteAsync(data, 0, data.Length);
             
             // Read response
-            var buffer = new byte[1024];
+            var buffer = new byte[8024];
             var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
             var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
             
@@ -660,7 +660,7 @@ public sealed class ClientService
             var data = Encoding.UTF8.GetBytes(json);
             await _stream!.WriteAsync(data, 0, data.Length);
 
-            var buffer = new byte[4096];
+            var buffer = new byte[12096];
             var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
             if (bytesRead <= 0) return null;
             var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
