@@ -42,7 +42,7 @@ public class TcpClientService
             await _stream!.WriteAsync(data, 0, data.Length);
             
             // Read response
-            var buffer = new byte[1024];
+            var buffer = new byte[8024];
             var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
             var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
             
