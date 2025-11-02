@@ -20,9 +20,9 @@ namespace PCTimeLimit;
 
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
-	private readonly DispatcherTimer _uiTimer;
-	private readonly TimeManager _timeManager;
-	private readonly UsageTracker _usageTracker;
+	private DispatcherTimer _uiTimer;
+	private TimeManager _timeManager;
+	private UsageTracker _usageTracker;
 	private string? _adminCode;
 	private string? _computerId;
 	private ClientService? _clientService;
@@ -39,68 +39,90 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	public MainWindow()
 	{
 		InitializeComponent();
-		
-		// Try to load saved Admin Code and auto-continue
-		var saved = LoadClientSettings();
-		if (saved != null && !string.IsNullOrWhiteSpace(saved.AdminCode) && saved.AdminCode.Length == 6)
+		Loaded += async (_, _) => await InitializeAsync();
+	}
+
+	private async Task InitializeAsync()
+	{
+		try
 		{
-			InitializeApp(saved.AdminCode);
-		}
-		else
-		{
-			// Show login dialog to get Admin Code
-			var loginDialog = new LoginDialog();
-			var loginResult = loginDialog.ShowDialog();
-			
-			if (loginResult == true && loginDialog.IsAuthenticated)
+			// Try to load saved Admin Code and auto-continue
+			var adminCode = await AdminCodeManager.LoadAdminCodeAsync();
+			if (!string.IsNullOrWhiteSpace(adminCode) && adminCode.Length == 6)
 			{
-				// Initialize time manager and register with server
-				InitializeApp(loginDialog.AdminCode!);
+				await InitializeAppAsync(adminCode);
 			}
 			else
 			{
-				// User cancelled or authentication failed, close the app
-				Application.Current.Shutdown();
-				return;
+				// Show login dialog to get Admin Code
+				var loginDialog = new LoginDialog();
+				var loginResult = loginDialog.ShowDialog();
+				
+				if (loginResult == true && loginDialog.IsAuthenticated && !string.IsNullOrWhiteSpace(loginDialog.AdminCode))
+				{
+					// Save the admin code
+					if (await AdminCodeManager.SaveAdminCodeAsync(loginDialog.AdminCode))
+					{
+						// Initialize time manager and register with server
+						await InitializeAppAsync(loginDialog.AdminCode);
+					}
+					else
+					{
+						MessageBox.Show("Failed to save admin code. Please check application permissions.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+						Application.Current.Shutdown();
+						return;
+					}
+				}
+				else
+				{
+					// User cancelled or authentication failed, close the app
+					Application.Current.Shutdown();
+					return;
+				}
 			}
+			
+			_timeManager = new TimeManager();
+			_timeManager.Load();
+			// If server provided a daily limit during registration, apply it now
+			if (_serverDailyLimitPending.HasValue)
+			{
+				_timeManager.UpdateDailyLimit(_serverDailyLimitPending.Value);
+				_serverDailyLimitPending = null;
+			}
+			// If server provided allowed usage during registration, apply it now
+			if (!string.IsNullOrWhiteSpace(_serverAllowedUsagePending))
+			{
+				_timeManager.UpdateAllowedUsage(_serverAllowedUsagePending);
+				_serverAllowedUsagePending = null;
+			}
+
+			_usageTracker = new UsageTracker();
+			_usageTracker.Load();
+			_usageTracker.Start();
+
+			_uiTimer = new DispatcherTimer
+			{
+				Interval = TimeSpan.FromSeconds(1)
+			};
+			_uiTimer.Tick += (_, _) => UpdateUi();
+			_uiTimer.Start();
+
+			CompositionTarget_Rendering();
+			UpdateUi();
+
+			PreventClosing();
+			SetRunOnStartup(true);
+			// Start periodic sync with server to reflect admin changes
+			StartSyncTimer();
 		}
-		
-		_timeManager = new TimeManager();
-		_timeManager.Load();
-		// If server provided a daily limit during registration, apply it now
-		if (_serverDailyLimitPending.HasValue)
+		catch (Exception ex)
 		{
-			_timeManager.UpdateDailyLimit(_serverDailyLimitPending.Value);
-			_serverDailyLimitPending = null;
+			MessageBox.Show($"Failed to initialize application: {ex.Message}", "Initialization Error", MessageBoxButton.OK, MessageBoxImage.Error);
+			Application.Current.Shutdown();
 		}
-		// If server provided allowed usage during registration, apply it now
-		if (!string.IsNullOrWhiteSpace(_serverAllowedUsagePending))
-		{
-			_timeManager.UpdateAllowedUsage(_serverAllowedUsagePending);
-			_serverAllowedUsagePending = null;
-		}
-
-		_usageTracker = new UsageTracker();
-		_usageTracker.Load();
-		_usageTracker.Start();
-
-		_uiTimer = new DispatcherTimer
-		{
-			Interval = TimeSpan.FromSeconds(1)
-		};
-		_uiTimer.Tick += (_, _) => UpdateUi();
-		_uiTimer.Start();
-
-		CompositionTarget_Rendering();
-		UpdateUi();
-
-		PreventClosing();
-		SetRunOnStartup(true);
-		// Start periodic sync with server to reflect admin changes
-		StartSyncTimer();
     }
 
-	private async void InitializeApp(string adminCode)
+	private async Task InitializeAppAsync(string adminCode)
 	{
 		try
 		{
@@ -122,8 +144,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 					_adminCode = adminCode;
 					_computerId = computerId;
 					_clientService = clientService;
-					// Persist for next startup
-					SaveClientSettings(new ClientSettings { AdminCode = adminCode, ComputerId = computerId });
+					
+					// Save computer ID to settings
+					var settings = new ClientSettings { ComputerId = computerId };
+					await SaveClientSettingsAsync(settings);
+					
 					// Capture server-provided settings (applied after TimeManager is created)
 					_serverDailyLimitPending = regResult.DailyLimit;
 					_serverAllowedUsagePending = regResult.AllowedUsageJson;
@@ -143,7 +168,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 				// Offline mode: proceed to timer and retry connecting every minute
 				_adminCode = adminCode;
 				_computerId = computerId;
-				SaveClientSettings(new ClientSettings { AdminCode = adminCode, ComputerId = computerId });
+				
+				// Save computer ID to settings
+				var settings = new ClientSettings { ComputerId = computerId };
+				await SaveClientSettingsAsync(settings);
+				
 				StartReconnectTimer(computerId, computerName, adminCode);
 			}
 		}
@@ -182,7 +211,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 			_clientService = client;
 			// Persist (already saved on startup, but keep it idempotent)
-			SaveClientSettings(new ClientSettings { AdminCode = adminCode, ComputerId = computerId });
+			await SaveClientSettingsAsync(new ClientSettings { ComputerId = computerId });
 			// If server provided a daily limit, apply now if _timeManager exists
 			_serverDailyLimitPending = reg.DailyLimit;
 			if (_timeManager != null && _serverDailyLimitPending.HasValue)
@@ -211,30 +240,88 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		statusTimer.Start();
 	}
 
-	private static ClientSettings? LoadClientSettings()
+	private static async Task<ClientSettings?> LoadClientSettingsAsync()
 	{
 		try
 		{
 			AppStorage.EnsureFolder();
 			if (File.Exists(AppStorage.ClientFilePath))
 			{
-				var json = File.ReadAllText(AppStorage.ClientFilePath);
+				var json = await File.ReadAllTextAsync(AppStorage.ClientFilePath);
 				return JsonSerializer.Deserialize<ClientSettings>(json);
 			}
 		}
-		catch { }
+		catch (Exception ex)
+		{
+			System.Diagnostics.Debug.WriteLine($"Error loading client settings: {ex.Message}");
+		}
 		return null;
 	}
 
-	private static void SaveClientSettings(ClientSettings settings)
+	private static async Task<bool> SaveClientSettingsAsync(ClientSettings settings)
 	{
-		try
+		const int maxRetries = 3;
+		int attempt = 0;
+		
+		while (attempt < maxRetries)
 		{
-			AppStorage.EnsureFolder();
-			var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-			File.WriteAllText(AppStorage.ClientFilePath, json);
+			try
+			{
+				// Ensure the directory exists
+				AppStorage.EnsureFolder();
+				
+				// Write to a temporary file first
+				var tempFile = Path.Combine(AppStorage.AppFolder, Path.GetRandomFileName());
+				var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+				
+				// Write to temp file asynchronously
+				await File.WriteAllTextAsync(tempFile, json);
+				
+				// If we get here, write was successful, now replace the original file
+				if (File.Exists(AppStorage.ClientFilePath))
+				{
+					File.Replace(tempFile, AppStorage.ClientFilePath, null);
+				}
+				else
+				{
+					File.Move(tempFile, AppStorage.ClientFilePath);
+				}
+				
+				// If we get here, everything worked
+				return true;
+			}
+			catch (UnauthorizedAccessException ex)
+			{
+				attempt++;
+				if (attempt >= maxRetries)
+				{
+					System.Diagnostics.Debug.WriteLine($"Failed to save client settings after {maxRetries} attempts: {ex.Message}");
+					return false;
+				}
+				await Task.Delay(100);
+			}
+			catch (IOException ex)
+			{
+				attempt++;
+				if (attempt >= maxRetries)
+				{
+					System.Diagnostics.Debug.WriteLine($"Failed to save client settings after {maxRetries} attempts: {ex.Message}");
+					return false;
+				}
+				await Task.Delay(100);
+			}
+			catch (Exception ex) when (attempt < maxRetries - 1)
+			{
+				attempt++;
+				await Task.Delay(100);
+			}
+			catch (Exception ex)
+			{
+				System.Diagnostics.Debug.WriteLine($"Failed to save client settings: {ex.Message}");
+				return false;
+			}
 		}
-		catch { }
+		return false;
 	}
 
 	private void StartSyncTimer()
@@ -472,7 +559,7 @@ public sealed class ClientService
         }
     }
     
-		public sealed class RegisterComputerResult
+	public sealed class RegisterComputerResult
     {
         public bool Success { get; set; }
         public TimeSpan DailyLimit { get; set; }
@@ -787,6 +874,7 @@ public sealed class AppStorage
 	public static string SettingsFilePath => Path.Combine(AppFolder, "settings.json");
 	public static string UsageFilePath => Path.Combine(AppFolder, "usage.json");
 	public static string ClientFilePath => Path.Combine(AppFolder, "client.json");
+	public static string AdminCodeFilePath => Path.Combine(AppFolder, "admin_code.json");
 
 	public static void EnsureFolder()
 	{
@@ -797,9 +885,70 @@ public sealed class AppStorage
 	}
 }
 
+public static class AdminCodeManager
+{
+    private const int MaxRetries = 3;
+    private const int RetryDelayMs = 100;
+
+    public static async Task<bool> SaveAdminCodeAsync(string adminCode)
+    {
+        int attempt = 0;
+        while (attempt < MaxRetries)
+        {
+            try
+            {
+                AppStorage.EnsureFolder();
+                var tempFile = Path.Combine(AppStorage.AppFolder, Path.GetRandomFileName());
+                await File.WriteAllTextAsync(tempFile, adminCode);
+                
+                if (File.Exists(AppStorage.AdminCodeFilePath))
+                {
+                    File.Replace(tempFile, AppStorage.AdminCodeFilePath, null);
+                }
+                else
+                {
+                    File.Move(tempFile, AppStorage.AdminCodeFilePath);
+                }
+                return true;
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException)
+            {
+                attempt++;
+                if (attempt >= MaxRetries)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to save admin code after {MaxRetries} attempts: {ex.Message}");
+                    return false;
+                }
+                await Task.Delay(RetryDelayMs);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Unexpected error saving admin code: {ex.Message}");
+                return false;
+            }
+        }
+        return false;
+    }
+
+    public static async Task<string?> LoadAdminCodeAsync()
+    {
+        if (!File.Exists(AppStorage.AdminCodeFilePath))
+            return null;
+
+        try
+        {
+            return await File.ReadAllTextAsync(AppStorage.AdminCodeFilePath);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error loading admin code: {ex.Message}");
+            return null;
+        }
+    }
+}
+
 public sealed class ClientSettings
 {
-    public string AdminCode { get; set; } = string.Empty;
     public string ComputerId { get; set; } = string.Empty;
 }
 
