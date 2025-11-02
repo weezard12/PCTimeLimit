@@ -3,25 +3,19 @@ Description=PC Time Limit Server
 After=network.target
 
 [Service]
-Type=notify
+Type=simple
 User=ubuntu
-WorkingDirectory=/opt/pctimelimit-server
-ExecStart=/home/ubuntu/Desktop/PCTimeLimitServer
+WorkingDirectory=/home/ubuntu
+ExecStart=/home/ubuntu/PCTimeLimitServer
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
-# Security settings for Ubuntu
 NoNewPrivileges=yes
 PrivateTmp=yes
-ProtectSystem=full
-ProtectHome=read-only
-
-# Performance and resource limits
-LimitNOFILE=65536
-MemoryLimit=512M
+ProtectSystem=no
+ProtectHome=no
 
 [Install]
 WantedBy=multi-user.target
-
