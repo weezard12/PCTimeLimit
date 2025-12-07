@@ -22,5 +22,18 @@
     <Feature Id="Main" Title="PC Time Limit Child" Level="1">
       <ComponentGroupRef Id="PCTimeLimitComponents" />
     </Feature>
+
+    <!-- Launch the app once after a successful first-time install -->
+    <CustomAction
+      Id="LaunchPCTimeLimit"
+      FileRef="PCTimeLimitExeFile"
+      Execute="immediate"
+      Impersonate="yes"
+      Return="asyncNoWait"
+      ExeCommand="" />
+
+    <InstallExecuteSequence>
+      <Custom Action="LaunchPCTimeLimit" After="InstallFinalize" Condition="NOT Installed" />
+    </InstallExecuteSequence>
   </Package>
 </Wix>
