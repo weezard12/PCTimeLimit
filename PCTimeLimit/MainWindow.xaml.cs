@@ -874,7 +874,7 @@ public sealed class AppStorage
 	public static string SettingsFilePath => Path.Combine(AppFolder, "settings.json");
 	public static string UsageFilePath => Path.Combine(AppFolder, "usage.json");
 	public static string ClientFilePath => Path.Combine(AppFolder, "client.json");
-	public static string AdminCodeFilePath => Path.Combine(AppFolder, "admin_code.json");
+	public static string AdminCodeFilePath => Path.Combine(AppFolder, "admin_code.txt");
 
 	public static void EnsureFolder()
 	{
@@ -937,7 +937,8 @@ public static class AdminCodeManager
 
         try
         {
-            return await File.ReadAllTextAsync(AppStorage.AdminCodeFilePath);
+            var content = await File.ReadAllTextAsync(AppStorage.AdminCodeFilePath);
+            return content.Trim();
         }
         catch (Exception ex)
         {
