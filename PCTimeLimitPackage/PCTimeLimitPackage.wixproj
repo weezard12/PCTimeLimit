@@ -10,6 +10,10 @@
     <InstallerPlatform>x64</InstallerPlatform>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.2" />
+  </ItemGroup>
+
   <Target Name="WarnIfPublishMissing" BeforeTargets="Build">
     <Message Importance="high"
              Condition="!Exists('$(PublishDir)\PCTimeLimit.exe')"

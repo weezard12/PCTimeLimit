@@ -1,6 +1,17 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Fragment>
     <ComponentGroup Id="PCTimeLimitComponents" Directory="INSTALLFOLDER">
+      <!-- Lock down install folder so only admins/system can delete contents -->
+      <Component Id="SecureInstallFolder" Guid="A75D80BB-37E8-4F11-90C0-DC2DD0E6A2C1" Directory="INSTALLFOLDER" Bitness="always64">
+        <CreateFolder>
+          <util:PermissionEx User="Users" GenericRead="yes" GenericExecute="yes" Delete="no" DeleteChild="no" />
+          <util:PermissionEx User="Authenticated Users" GenericRead="yes" GenericExecute="yes" Delete="no" DeleteChild="no" />
+          <util:PermissionEx User="Administrators" GenericAll="yes" />
+          <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+        </CreateFolder>
+      </Component>
+
       <Component Id="PCTimeLimitExe" Guid="*" Bitness="always64">
         <File Id="PCTimeLimitExeFile" Source="$(var.PublishDir)\PCTimeLimit.exe" KeyPath="yes" />
       </Component>
