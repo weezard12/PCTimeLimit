@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 REM Always run relative to this script location
 pushd "%~dp0"
@@ -44,13 +44,13 @@ echo MSI build exit code: %MSI_EXIT%
 if not "%MSI_EXIT%"=="0" (
     call :fail_exit "Failed to build MSI installer" "%MSI_LOG%" %MSI_EXIT%
 ) else (
-    set "MSI_SOURCE=%~dp0PCTimeLimitPackage\bin\Release\en-us\PCTimeLimitChild.msi"
+    set "MSI_SOURCE=%~dp0PCTimeLimitPackage\bin\Release\en-US\PCTimeLimitChild.msi"
     set "MSI_TARGET=%BASEDIR%\PCTimeLimitChild.msi"
-    if exist "%MSI_SOURCE%" (
-        copy /Y "%MSI_SOURCE%" "%MSI_TARGET%" >nul
-        echo MSI copied to "%MSI_TARGET%"
+    if exist "!MSI_SOURCE!" (
+        copy /Y "!MSI_SOURCE!" "!MSI_TARGET!" >nul
+        echo MSI copied to "!MSI_TARGET!"
     ) else (
-        echo MSI build finished but file not found at "%MSI_SOURCE%"
+        echo MSI build finished but file not found at "!MSI_SOURCE!"
     )
 )
 echo MSI build step finished.
