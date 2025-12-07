@@ -21,6 +21,23 @@ if %errorlevel% neq 0 (
     echo /b %errorlevel%
 )
 
+REM Build MSI installer for child client (requires WiX build tools)
+echo Building PCTimeLimit MSI installer...
+dotnet build PCTimeLimitPackage\PCTimeLimitPackage.wixproj -c Release
+if %errorlevel% neq 0 (
+    echo Failed to build MSI installer
+    echo /b %errorlevel%
+) else (
+    set MSI_SOURCE="PCTimeLimitPackage\bin\Release\en-us\PCTimeLimitChild.msi"
+    set MSI_TARGET="%BASEDIR%\PCTimeLimitChild.msi"
+    if exist %MSI_SOURCE% (
+        copy /Y %MSI_SOURCE% %MSI_TARGET% >nul
+        echo MSI copied to %MSI_TARGET%
+    ) else (
+        echo MSI build finished but file not found at %MSI_SOURCE%
+    )
+)
+
 REM Publish Admin App (Windows)
 echo Publishing PCTimeLimitAdmin...
 dotnet publish PCTimeLimitAdmin\PCTimeLimitAdmin.csproj -c Release -r win-x64 --self-contained true ^
