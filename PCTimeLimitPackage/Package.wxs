@@ -1,0 +1,39 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="PC Time Limit (Child)"
+    Manufacturer="PC Time Limit"
+    Version="1.0.0.0"
+    UpgradeCode="{C77AD337-0A39-4BA0-954E-6D1C2DF2E79B}"
+    Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeError)" />
+
+    <!-- Require elevation and hide ARP change/remove entries to make removal harder -->
+    <Property Id="ARPNOREMOVE" Value="1" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <Launch
+      Condition="Privileged"
+      Message="Administrator privileges are required to install or uninstall this product." />
+
+    <!-- Embed cabinet into the MSI for a single-file installer -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="Main" Title="PC Time Limit Child" Level="1">
+      <ComponentGroupRef Id="PCTimeLimitComponents" />
+    </Feature>
+
+    <!-- Launch the app once after a successful first-time install -->
+    <CustomAction
+      Id="LaunchPCTimeLimit"
+      FileRef="PCTimeLimitExeFile"
+      Execute="immediate"
+      Impersonate="yes"
+      Return="asyncNoWait"
+      ExeCommand="" />
+
+    <InstallExecuteSequence>
+      <Custom Action="LaunchPCTimeLimit" After="InstallFinalize" Condition="NOT Installed" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>
