@@ -1,12 +1,12 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Fragment>
     <ComponentGroup Id="PCTimeLimitComponents" Directory="INSTALLFOLDER">
-      <Component Id="PCTimeLimitExe" Guid="*" Win64="yes">
+      <Component Id="PCTimeLimitExe" Guid="*" Bitness="always64">
         <File Id="PCTimeLimitExeFile" Source="$(var.PublishDir)\PCTimeLimit.exe" KeyPath="yes" />
       </Component>
 
       <!-- Enforce auto-start from HKLM so removal/changes require admin rights -->
-      <Component Id="StartupRunKey" Guid="*" Win64="yes">
+      <Component Id="StartupRunKey" Guid="*" Bitness="always64">
         <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run">
           <RegistryValue
             Id="PCTimeLimitRun"

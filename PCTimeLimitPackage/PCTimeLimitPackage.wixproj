@@ -6,6 +6,8 @@
     <DefineConstants>PublishDir=$(PublishDir)</DefineConstants>
     <!-- MSI output name -->
     <OutputName>PCTimeLimitChild</OutputName>
+    <!-- Build a 64-bit installer -->
+    <InstallerPlatform>x64</InstallerPlatform>
   </PropertyGroup>
 
   <Target Name="WarnIfPublishMissing" BeforeTargets="Build">
