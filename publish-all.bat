@@ -20,6 +20,7 @@ REM Project paths
 set "CHILD_PROJ=%~dp0PCTimeLimit\PCTimeLimit.csproj"
 set "ADMIN_PROJ=%~dp0PCTimeLimitAdmin\PCTimeLimitAdmin.csproj"
 set "SERVER_PROJ=%~dp0PCTimeLimitServer\PCTimeLimitServer.csproj"
+set "SERVICE_PROJ=%~dp0PCTimeLimitService\PCTimeLimitService.csproj"
 set "MSI_PROJ=%~dp0PCTimeLimitPackage\PCTimeLimitPackage.wixproj"
 
 REM Publish Child Client (Windows)
@@ -33,6 +34,17 @@ if not "%PUBLISH_EXIT%"=="0" (
     call :fail_exit "Failed to publish PCTimeLimit (child client)" "" %PUBLISH_EXIT%
 )
 echo Child publish finished.
+
+REM Build Windows Service (runs under LocalSystem to keep the child app alive)
+set "SERVICE_OUT=%BASEDIR%\PCTimeLimitService"
+echo Building PCTimeLimitService (Windows service)...
+dotnet build "%SERVICE_PROJ%" -c Release -p:Platform=AnyCPU -p:OutputPath="%SERVICE_OUT%\\"
+set "SERVICE_EXIT=%errorlevel%"
+echo Service build exit code: %SERVICE_EXIT%
+if not "%SERVICE_EXIT%"=="0" (
+    call :fail_exit "Failed to build PCTimeLimitService" "" %SERVICE_EXIT%
+)
+echo Service build finished.
 
 REM Build MSI installer for child client (requires WiX build tools)
 set "MSI_LOG=%LOGDIR%\msi-build.log"

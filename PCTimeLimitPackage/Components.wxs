@@ -12,12 +12,39 @@
         </CreateFolder>
       </Component>
 
-      <Component Id="PCTimeLimitExe" Guid="*" Bitness="always64">
+      <Component Id="PCTimeLimitExe" Guid="9F103964-C501-4198-B2B5-2F41A7EFC3C1" Bitness="always64">
         <File Id="PCTimeLimitExeFile" Source="$(var.PublishDir)\PCTimeLimit.exe" KeyPath="yes" />
       </Component>
 
+      <Component Id="PCTimeLimitServiceExe" Guid="30954A7B-042A-47C0-92E8-26B179A3219C" Bitness="always64">
+        <File Id="PCTimeLimitServiceFile" Source="$(var.ServicePublishDir)\PCTimeLimitService.exe" KeyPath="yes" />
+        <ServiceInstall
+          Id="PCTimeLimitServiceInstaller"
+          Name="PCTimeLimitService"
+          DisplayName="PC Time Limit Service"
+          Description="Keeps the PC Time Limit child app running and restores startup settings."
+          Start="auto"
+          Type="ownProcess"
+          ErrorControl="normal"
+          Account="LocalSystem" />
+        <util:ServiceConfig
+          ServiceName="PCTimeLimitService"
+          FirstFailureActionType="restart"
+          SecondFailureActionType="restart"
+          ThirdFailureActionType="restart"
+          ResetPeriodInDays="1"
+          RestartServiceDelayInSeconds="5" />
+        <ServiceControl
+          Id="PCTimeLimitServiceControl"
+          Name="PCTimeLimitService"
+          Start="install"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
+      </Component>
+
       <!-- Enforce auto-start from HKLM so removal/changes require admin rights -->
-      <Component Id="StartupRunKey" Guid="*" Bitness="always64">
+      <Component Id="StartupRunKey" Guid="A3ED419F-F3DE-420B-9FC5-7B1D3BC466DA" Bitness="always64">
         <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run">
           <RegistryValue
             Id="PCTimeLimitRun"
