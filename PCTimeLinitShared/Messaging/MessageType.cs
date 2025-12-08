@@ -1,4 +1,4 @@
-namespace PCTimeLinitShared.Messaging;
+namespace PCTimeLimitShared.Messaging;
 
 public enum MessageType
 {

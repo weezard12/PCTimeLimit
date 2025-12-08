@@ -14,7 +14,7 @@ using System.Net.Sockets;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
-using static PCTimeLinitShared.Consts;
+using static PCTimeLimitShared.Consts;
 
 namespace PCTimeLimit;
 

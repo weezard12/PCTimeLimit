@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace PCTimeLinitShared
+namespace PCTimeLimitShared
 {
     static class Consts
     {

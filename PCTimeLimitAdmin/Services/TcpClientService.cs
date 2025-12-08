@@ -1,9 +1,9 @@
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using PCTimeLinitShared.Messaging;
+using PCTimeLimitShared.Messaging;
 using PCTimeLimitAdmin.Configuration;
-using static PCTimeLinitShared.Consts;
+using static PCTimeLimitShared.Consts;
 
 namespace PCTimeLimitAdmin.Services;
 

@@ -332,7 +332,7 @@ public partial class MainWindow : Window
         // If enabling and no JSON exists yet, prefill default example
         if (_selectedComputer != null && string.IsNullOrWhiteSpace(_selectedComputer.AllowedUsageJson))
         {
-            _selectedComputer.AllowedUsageJson = PCTimeLinitShared.Consts.AllowedUsageJsonExample;
+            _selectedComputer.AllowedUsageJson = PCTimeLimitShared.Consts.AllowedUsageJsonExample;
             if (_tcpClient?.IsConnected == true)
             {
                 var request = new

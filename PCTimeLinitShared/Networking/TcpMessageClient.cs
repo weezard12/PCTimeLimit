@@ -2,7 +2,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 
-namespace PCTimeLinitShared.Networking;
+namespace PCTimeLimitShared.Networking;
 
 public class TcpMessageClient
 {

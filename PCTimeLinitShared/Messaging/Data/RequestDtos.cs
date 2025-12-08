@@ -1,6 +1,6 @@
 using System;
 
-namespace PCTimeLinitShared.Messaging;
+namespace PCTimeLimitShared.Messaging;
 
 public class CreateAccountData
 {

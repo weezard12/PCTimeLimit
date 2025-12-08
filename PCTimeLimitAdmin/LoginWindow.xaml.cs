@@ -2,7 +2,7 @@ using System.Windows;
 using System.Text.Json;
 using PCTimeLimitAdmin.Services;
 using PCTimeLimitAdmin.Configuration;
-using PCTimeLinitShared;
+using PCTimeLimitShared;
 
 namespace PCTimeLimitAdmin;
 
