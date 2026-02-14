@@ -5,6 +5,30 @@ public static class ApiHeaders
     public const string OpsKey = "X-Ops-Key";
 }
 
+public enum Weekday
+{
+    Sunday = 0,
+    Monday = 1,
+    Tuesday = 2,
+    Wednesday = 3,
+    Thursday = 4,
+    Friday = 5,
+    Saturday = 6
+}
+
+public sealed class AllowedUsageRangeDto
+{
+    public Weekday Day { get; set; }
+    public int StartMinute { get; set; }
+    public int EndMinute { get; set; }
+}
+
+public sealed class AllowedUsageScheduleDto
+{
+    public List<AllowedUsageRangeDto> Ranges { get; set; } = new();
+    public DateTime UpdatedAtUtc { get; set; }
+}
+
 public sealed class RegisterAdminRequest
 {
     public string Username { get; set; } = string.Empty;
@@ -51,7 +75,7 @@ public sealed class RegisterChildResponse
     public string Message { get; set; } = string.Empty;
     public string DeviceToken { get; set; } = string.Empty;
     public TimeSpan DailyLimit { get; set; }
-    public string AllowedUsageJson { get; set; } = string.Empty;
+    public AllowedUsageScheduleDto AllowedUsageSchedule { get; set; } = new();
 }
 
 public sealed class UpdateStatusRequest
@@ -66,7 +90,7 @@ public sealed class ComputerStateResponse
     public TimeSpan DailyLimit { get; set; }
     public bool PendingReset { get; set; }
     public bool PendingForceLockout { get; set; }
-    public string AllowedUsageJson { get; set; } = string.Empty;
+    public AllowedUsageScheduleDto AllowedUsageSchedule { get; set; } = new();
 }
 
 public sealed class ComputerDto
@@ -80,7 +104,7 @@ public sealed class ComputerDto
     public bool IsOnline { get; set; }
     public bool PendingReset { get; set; }
     public bool PendingForceLockout { get; set; }
-    public string AllowedUsageJson { get; set; } = string.Empty;
+    public AllowedUsageScheduleDto AllowedUsageSchedule { get; set; } = new();
 }
 
 public sealed class ComputersResponse
@@ -97,7 +121,14 @@ public sealed class SetTimeLimitRequest
 
 public sealed class SetAllowedUsageRequest
 {
-    public string AllowedUsageJson { get; set; } = string.Empty;
+    public List<AllowedUsageRangeDto> Ranges { get; set; } = new();
+}
+
+public sealed class AllowedUsageScheduleResponse
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public AllowedUsageScheduleDto Schedule { get; set; } = new();
 }
 
 public sealed class QueueActionResponse

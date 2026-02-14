@@ -1,10 +1,11 @@
 <Window x:Class="PCTimeLimitAdmin.AllowedUsageWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Allowed Usage Editor" Height="520" Width="640" WindowStartupLocation="CenterOwner">
+        Title="Allowed Usage Schedule" Height="640" Width="760" WindowStartupLocation="CenterOwner">
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -12,9 +13,19 @@
             <StackPanel x:Name="DaysPanel" Orientation="Vertical" />
         </ScrollViewer>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+        <Border Grid.Row="1" Margin="0,10,0,0" Padding="8" BorderThickness="1" BorderBrush="#FFC8C8C8" CornerRadius="4">
+            <StackPanel>
+                <TextBlock Text="Validation" FontWeight="Bold" Margin="0,0,0,4"/>
+                <TextBlock x:Name="ValidationSummaryText"
+                           Text="No validation errors."
+                           Foreground="DarkGreen"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
             <Button Width="90" Height="28" Content="Cancel" Margin="0,0,10,0" Click="Cancel_Click"/>
-            <Button Width="120" Height="28" Content="Save" Click="Save_Click"/>
+            <Button x:Name="SaveButton" Width="120" Height="28" Content="Save" Click="Save_Click"/>
         </StackPanel>
     </Grid>
 </Window>

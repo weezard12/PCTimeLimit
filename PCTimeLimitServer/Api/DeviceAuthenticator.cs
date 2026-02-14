@@ -28,6 +28,8 @@ public static class DeviceAuthenticator
         var credential = await dbContext.DeviceCredentials
             .Include(x => x.Computer)
             .ThenInclude(x => x.AdminUser)
+            .Include(x => x.Computer)
+            .ThenInclude(x => x.AllowedUsageRanges)
             .SingleOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
 
         if (credential is null || credential.RevokedAtUtc is not null || credential.ExpiresAtUtc <= now)

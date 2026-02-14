@@ -1,116 +1,294 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using PCTimeLimitShared.Contracts;
+using PCTimeLimitShared.Scheduling;
 
 namespace PCTimeLimitAdmin
 {
     public partial class AllowedUsageWindow : Window
     {
-        private static readonly string[] OrderedDays = new[] { "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday" };
-        private readonly Dictionary<string, List<(TimeSpan start, TimeSpan end)>> _model = new(StringComparer.OrdinalIgnoreCase)
+        private static readonly IReadOnlyList<Weekday> OrderedDays = new[]
         {
-            { "sunday", new() },
-            { "monday", new() },
-            { "tuesday", new() },
-            { "wednesday", new() },
-            { "thursday", new() },
-            { "friday", new() },
-            { "saturday", new() },
+            Weekday.Monday,
+            Weekday.Tuesday,
+            Weekday.Wednesday,
+            Weekday.Thursday,
+            Weekday.Friday,
+            Weekday.Saturday,
+            Weekday.Sunday
         };
 
-        public string? ResultJson { get; private set; }
+        private readonly List<TimeOption> _startOptions = CreateTimeOptions(0, AllowedUsageScheduleUtility.MinutesPerDay - AllowedUsageScheduleUtility.StepMinutes);
+        private readonly List<TimeOption> _endOptions = CreateTimeOptions(AllowedUsageScheduleUtility.StepMinutes, AllowedUsageScheduleUtility.MinutesPerDay);
+        private readonly Dictionary<Weekday, DayEditorState> _days = new();
 
-        public AllowedUsageWindow(string? existingJson)
+        private List<AllowedUsageRangeDto> _currentCanonical = new();
+
+        public IReadOnlyList<AllowedUsageRangeDto> ResultRanges { get; private set; } = Array.Empty<AllowedUsageRangeDto>();
+
+        public AllowedUsageWindow(AllowedUsageScheduleDto? existingSchedule)
         {
             InitializeComponent();
-            if (!string.IsNullOrWhiteSpace(existingJson))
-            {
-                TryLoad(existingJson);
-            }
-            BuildUi();
+
+            var initialRanges = AllowedUsageScheduleUtility.Canonicalize(existingSchedule?.Ranges)
+                .OrderBy(r => r.Day)
+                .ThenBy(r => r.StartMinute)
+                .ToList();
+
+            BuildUi(initialRanges);
+            Revalidate();
         }
 
-        private void TryLoad(string json)
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-                foreach (var day in OrderedDays)
-                {
-                    if (!root.TryGetProperty(day, out var arr) || arr.ValueKind != JsonValueKind.Array) continue;
-                    var list = new List<(TimeSpan, TimeSpan)>();
-                    foreach (var el in arr.EnumerateArray())
-                    {
-                        if (el.ValueKind != JsonValueKind.Object) continue;
-                        if (!el.TryGetProperty("start", out var sEl) || !el.TryGetProperty("end", out var eEl)) continue;
-                        var sStr = sEl.GetString();
-                        var eStr = eEl.GetString();
-                        if (TimeSpan.TryParse(sStr, out var sTs) && TimeSpan.TryParse(eStr, out var eTs))
-                        {
-                            list.Add((sTs, eTs));
-                        }
-                    }
-                    _model[day] = list;
-                }
-            }
-            catch { }
-        }
-
-        private void BuildUi()
+        private void BuildUi(IReadOnlyList<AllowedUsageRangeDto> initialRanges)
         {
             DaysPanel.Children.Clear();
-            foreach (var key in OrderedDays)
+            _days.Clear();
+
+            foreach (var day in OrderedDays)
             {
-                _model.TryGetValue(key, out var rangesForDay);
-                rangesForDay ??= new List<(TimeSpan, TimeSpan)>();
-                var dayName = char.ToUpper(key[0]) + key.Substring(1);
-                var dayBlock = new GroupBox { Header = dayName, Margin = new Thickness(0, 0, 0, 10) };
-                var stack = new StackPanel { Margin = new Thickness(8) };
+                var rowsPanel = new StackPanel { Orientation = Orientation.Vertical };
 
-                var itemsPanel = new StackPanel { Orientation = Orientation.Vertical };
-                foreach (var (start, end) in rangesForDay)
+                var dayState = new DayEditorState
                 {
-                    itemsPanel.Children.Add(CreateRangeRow(key, start, end));
-                }
-
-                var addBtn = new Button { Content = "Add Range", Width = 100, Height = 24, Margin = new Thickness(0, 5, 0, 0) };
-                addBtn.Click += (s, e) =>
-                {
-                    itemsPanel.Children.Add(CreateRangeRow(key, TimeSpan.FromHours(8), TimeSpan.FromHours(15)));
+                    Day = day,
+                    RowsPanel = rowsPanel,
+                    PreviewText = new TextBlock { Margin = new Thickness(0, 6, 0, 0), Foreground = Brushes.DarkSlateGray, TextWrapping = TextWrapping.Wrap }
                 };
 
-                stack.Children.Add(itemsPanel);
-                stack.Children.Add(addBtn);
-                dayBlock.Content = stack;
-                DaysPanel.Children.Add(dayBlock);
+                var group = new GroupBox
+                {
+                    Header = day.ToString(),
+                    Margin = new Thickness(0, 0, 0, 10)
+                };
+
+                var stack = new StackPanel { Margin = new Thickness(8) };
+
+                var actionsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+
+                var addButton = new Button { Content = "Add Range", Width = 90, Height = 24, Margin = new Thickness(0, 0, 8, 0) };
+                addButton.Click += (_, _) =>
+                {
+                    AddRangeRow(dayState, 8 * 60, 9 * 60);
+                    Revalidate();
+                };
+
+                var clearButton = new Button { Content = "Clear Day", Width = 90, Height = 24 };
+                clearButton.Click += (_, _) =>
+                {
+                    foreach (var row in dayState.Rows.ToList())
+                    {
+                        dayState.RowsPanel.Children.Remove(row.Container);
+                    }
+
+                    dayState.Rows.Clear();
+                    Revalidate();
+                };
+
+                actionsPanel.Children.Add(addButton);
+                actionsPanel.Children.Add(clearButton);
+
+                stack.Children.Add(rowsPanel);
+                stack.Children.Add(actionsPanel);
+                stack.Children.Add(new TextBlock { Text = "Merged Preview:", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 0) });
+                stack.Children.Add(dayState.PreviewText);
+                group.Content = stack;
+
+                DaysPanel.Children.Add(group);
+                _days[day] = dayState;
+
+                foreach (var range in initialRanges.Where(r => r.Day == day))
+                {
+                    AddRangeRow(dayState, range.StartMinute, range.EndMinute);
+                }
             }
         }
 
-        private UIElement CreateRangeRow(string dayKey, TimeSpan start, TimeSpan end)
+        private void AddRangeRow(DayEditorState dayState, int startMinute, int endMinute)
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
-            var startBox = new TextBox { Width = 60, Text = start.ToString("hh\\:mm"), Margin = new Thickness(0, 0, 6, 0) };
-            var sep = new TextBlock { Text = "–", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
-            var endBox = new TextBox { Width = 60, Text = end.ToString("hh\\:mm"), Margin = new Thickness(0, 0, 6, 0) };
-            var removeBtn = new Button { Content = "Remove", Width = 70, Height = 22 };
+            var rowContainer = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(0, 2, 0, 2) };
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
 
-            removeBtn.Click += (s, e) =>
+            var startCombo = new ComboBox
             {
-                if (row.Parent is Panel p)
-                {
-                    p.Children.Remove(row);
-                }
+                Width = 90,
+                Margin = new Thickness(0, 0, 6, 0),
+                ItemsSource = _startOptions,
+                DisplayMemberPath = nameof(TimeOption.Label)
             };
 
-            row.Children.Add(startBox);
-            row.Children.Add(sep);
-            row.Children.Add(endBox);
-            row.Children.Add(removeBtn);
-            return row;
+            var separator = new TextBlock
+            {
+                Text = "-",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0)
+            };
+
+            var endCombo = new ComboBox
+            {
+                Width = 90,
+                Margin = new Thickness(0, 0, 6, 0),
+                ItemsSource = _endOptions,
+                DisplayMemberPath = nameof(TimeOption.Label)
+            };
+
+            var removeButton = new Button
+            {
+                Content = "Remove",
+                Width = 70,
+                Height = 22
+            };
+
+            var errorText = new TextBlock
+            {
+                Foreground = Brushes.DarkRed,
+                Margin = new Thickness(0, 2, 0, 0),
+                Visibility = Visibility.Collapsed
+            };
+
+            var rowState = new RangeRowState
+            {
+                Day = dayState.Day,
+                Container = rowContainer,
+                StartCombo = startCombo,
+                EndCombo = endCombo,
+                ErrorText = errorText
+            };
+
+            startCombo.SelectionChanged += (_, _) => Revalidate();
+            endCombo.SelectionChanged += (_, _) => Revalidate();
+            removeButton.Click += (_, _) =>
+            {
+                dayState.RowsPanel.Children.Remove(rowContainer);
+                dayState.Rows.Remove(rowState);
+                Revalidate();
+            };
+
+            row.Children.Add(startCombo);
+            row.Children.Add(separator);
+            row.Children.Add(endCombo);
+            row.Children.Add(removeButton);
+
+            rowContainer.Children.Add(row);
+            rowContainer.Children.Add(errorText);
+
+            dayState.RowsPanel.Children.Add(rowContainer);
+            dayState.Rows.Add(rowState);
+
+            startCombo.SelectedItem = _startOptions.FirstOrDefault(x => x.Minute == startMinute) ?? _startOptions[0];
+            endCombo.SelectedItem = _endOptions.FirstOrDefault(x => x.Minute == endMinute) ?? _endOptions[0];
+        }
+
+        private void Revalidate()
+        {
+            var rowErrors = new List<string>();
+            var rawRanges = new List<AllowedUsageRangeDto>();
+
+            foreach (var dayState in _days.Values)
+            {
+                foreach (var row in dayState.Rows)
+                {
+                    row.ErrorText.Visibility = Visibility.Collapsed;
+                    row.ErrorText.Text = string.Empty;
+
+                    var start = (row.StartCombo.SelectedItem as TimeOption)?.Minute;
+                    var end = (row.EndCombo.SelectedItem as TimeOption)?.Minute;
+
+                    if (start is null || end is null)
+                    {
+                        ShowRowError(row, "Select both start and end times.");
+                        rowErrors.Add($"{row.Day}: Select both start and end times.");
+                        continue;
+                    }
+
+                    if (start.Value >= end.Value)
+                    {
+                        ShowRowError(row, "Start must be earlier than end.");
+                        rowErrors.Add($"{row.Day}: Start must be earlier than end.");
+                        continue;
+                    }
+
+                    rawRanges.Add(new AllowedUsageRangeDto
+                    {
+                        Day = row.Day,
+                        StartMinute = start.Value,
+                        EndMinute = end.Value
+                    });
+                }
+            }
+
+            var validationErrors = new List<string>(rowErrors);
+            var ruleValidation = AllowedUsageScheduleUtility.ValidateRawRanges(rawRanges);
+            validationErrors.AddRange(ruleValidation.Errors);
+
+            var canonical = AllowedUsageScheduleUtility.Canonicalize(rawRanges);
+            var dayCounts = canonical
+                .GroupBy(x => x.Day)
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            foreach (var (day, count) in dayCounts)
+            {
+                if (count > AllowedUsageScheduleUtility.MaxMergedRangesPerDay)
+                {
+                    validationErrors.Add($"{day}: Maximum {AllowedUsageScheduleUtility.MaxMergedRangesPerDay} merged ranges per day exceeded.");
+                }
+            }
+
+            _currentCanonical = canonical;
+            UpdateMergedPreview(canonical);
+
+            if (validationErrors.Count > 0)
+            {
+                ValidationSummaryText.Foreground = Brushes.DarkRed;
+                ValidationSummaryText.Text = string.Join(Environment.NewLine, validationErrors.Distinct());
+                SaveButton.IsEnabled = false;
+                return;
+            }
+
+            ValidationSummaryText.Foreground = Brushes.DarkGreen;
+            ValidationSummaryText.Text = canonical.Count == 0
+                ? "No exclusions configured. Timer always counts."
+                : "Schedule is valid.";
+            SaveButton.IsEnabled = true;
+        }
+
+        private void UpdateMergedPreview(IReadOnlyList<AllowedUsageRangeDto> canonical)
+        {
+            foreach (var day in OrderedDays)
+            {
+                if (!_days.TryGetValue(day, out var dayState))
+                {
+                    continue;
+                }
+
+                var lines = canonical
+                    .Where(x => x.Day == day)
+                    .OrderBy(x => x.StartMinute)
+                    .Select(x => $"{AllowedUsageScheduleUtility.FormatMinuteOfDay(x.StartMinute)} - {AllowedUsageScheduleUtility.FormatMinuteOfDay(x.EndMinute)}")
+                    .ToList();
+
+                dayState.PreviewText.Text = lines.Count == 0 ? "(none)" : string.Join(", ", lines);
+            }
+        }
+
+        private static void ShowRowError(RangeRowState row, string message)
+        {
+            row.ErrorText.Text = message;
+            row.ErrorText.Visibility = Visibility.Visible;
+        }
+
+        private static List<TimeOption> CreateTimeOptions(int startInclusive, int endInclusive)
+        {
+            var items = new List<TimeOption>();
+            for (var minute = startInclusive; minute <= endInclusive; minute += AllowedUsageScheduleUtility.StepMinutes)
+            {
+                items.Add(new TimeOption(minute));
+            }
+
+            return items;
         }
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
@@ -121,44 +299,53 @@ namespace PCTimeLimitAdmin
 
         private void Save_Click(object sender, RoutedEventArgs e)
         {
-            var result = new Dictionary<string, List<Dictionary<string, string>>>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var group in DaysPanel.Children.OfType<GroupBox>())
+            if (!SaveButton.IsEnabled)
             {
-                var key = group.Header!.ToString()!.ToLowerInvariant();
-                var ranges = new List<Dictionary<string, string>>();
-                if (group.Content is StackPanel sp)
-                {
-                    var itemsPanel = sp.Children.OfType<StackPanel>().FirstOrDefault();
-                    if (itemsPanel != null)
-                    {
-                        foreach (var row in itemsPanel.Children.OfType<StackPanel>())
-                        {
-                            var boxes = row.Children.OfType<TextBox>().ToList();
-                            if (boxes.Count >= 2)
-                            {
-                                var s = boxes[0].Text?.Trim();
-                                var eText = boxes[1].Text?.Trim();
-                                if (TimeSpan.TryParse(s, out var sTs) && TimeSpan.TryParse(eText, out var eTs))
-                                {
-                                    ranges.Add(new Dictionary<string, string>
-                                    {
-                                        { "start", sTs.ToString("hh\\:mm") },
-                                        { "end", eTs.ToString("hh\\:mm") }
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                result[key] = ranges;
+                return;
             }
 
-            ResultJson = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+            ResultRanges = _currentCanonical
+                .OrderBy(x => x.Day)
+                .ThenBy(x => x.StartMinute)
+                .Select(x => new AllowedUsageRangeDto
+                {
+                    Day = x.Day,
+                    StartMinute = x.StartMinute,
+                    EndMinute = x.EndMinute
+                })
+                .ToList();
+
             DialogResult = true;
             Close();
         }
+
+        private sealed class DayEditorState
+        {
+            public Weekday Day { get; init; }
+            public StackPanel RowsPanel { get; init; } = null!;
+            public TextBlock PreviewText { get; init; } = null!;
+            public List<RangeRowState> Rows { get; } = new();
+        }
+
+        private sealed class RangeRowState
+        {
+            public Weekday Day { get; init; }
+            public StackPanel Container { get; init; } = null!;
+            public ComboBox StartCombo { get; init; } = null!;
+            public ComboBox EndCombo { get; init; } = null!;
+            public TextBlock ErrorText { get; init; } = null!;
+        }
+
+        private sealed class TimeOption
+        {
+            public TimeOption(int minute)
+            {
+                Minute = minute;
+                Label = AllowedUsageScheduleUtility.FormatMinuteOfDay(minute);
+            }
+
+            public int Minute { get; }
+            public string Label { get; }
+        }
     }
 }
-
-

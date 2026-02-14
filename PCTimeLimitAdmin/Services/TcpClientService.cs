@@ -109,12 +109,20 @@ public sealed class TcpClientService : IDisposable
             new SetTimeLimitRequest { DailyTimeLimit = dailyLimit });
     }
 
-    public async Task<QueueActionResponse?> SetComputerAllowedUsageAsync(string computerId, string allowedUsageJson)
+    public async Task<AllowedUsageScheduleResponse?> GetComputerAllowedUsageAsync(string computerId)
     {
-        return await SendAuthorizedAsync<SetAllowedUsageRequest, QueueActionResponse>(
+        return await SendAuthorizedAsync<object, AllowedUsageScheduleResponse>(
+            HttpMethod.Get,
+            $"api/v1/admin/computers/{Uri.EscapeDataString(computerId)}/allowed-usage",
+            null);
+    }
+
+    public async Task<AllowedUsageScheduleResponse?> SetComputerAllowedUsageAsync(string computerId, IReadOnlyList<AllowedUsageRangeDto> ranges)
+    {
+        return await SendAuthorizedAsync<SetAllowedUsageRequest, AllowedUsageScheduleResponse>(
             HttpMethod.Put,
             $"api/v1/admin/computers/{Uri.EscapeDataString(computerId)}/allowed-usage",
-            new SetAllowedUsageRequest { AllowedUsageJson = allowedUsageJson ?? string.Empty });
+            new SetAllowedUsageRequest { Ranges = ranges?.ToList() ?? new List<AllowedUsageRangeDto>() });
     }
 
     public async Task<QueueActionResponse?> ResetComputerTimerAsync(string computerId)
@@ -293,6 +301,15 @@ public sealed class TcpClientService : IDisposable
                 };
             }
 
+            if (typeof(TResponse) == typeof(AllowedUsageScheduleResponse))
+            {
+                return (TResponse?)(object?)new AllowedUsageScheduleResponse
+                {
+                    Success = false,
+                    Message = error ?? response.ReasonPhrase ?? "Request failed"
+                };
+            }
+
             return default;
         }
 
@@ -312,6 +329,20 @@ public sealed class TcpClientService : IDisposable
             if (document.RootElement.TryGetProperty("title", out var title))
             {
                 return title.GetString();
+            }
+
+            if (document.RootElement.TryGetProperty("errors", out var errors)
+                && errors.ValueKind == JsonValueKind.Object)
+            {
+                var first = errors.EnumerateObject().FirstOrDefault();
+                if (first.Value.ValueKind == JsonValueKind.Array)
+                {
+                    var firstMessage = first.Value.EnumerateArray().FirstOrDefault();
+                    if (firstMessage.ValueKind == JsonValueKind.String)
+                    {
+                        return firstMessage.GetString();
+                    }
+                }
             }
         }
         catch

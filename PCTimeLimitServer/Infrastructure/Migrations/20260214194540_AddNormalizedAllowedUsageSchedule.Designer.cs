@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PCTimeLimitServer.Infrastructure;
 
@@ -10,9 +11,11 @@ using PCTimeLimitServer.Infrastructure;
 namespace PCTimeLimitServer.Infrastructure.Migrations
 {
     [DbContext(typeof(PCTimeLimitDbContext))]
-    partial class PCTimeLimitDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260214194540_AddNormalizedAllowedUsageSchedule")]
+    partial class AddNormalizedAllowedUsageSchedule
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.3");

@@ -107,6 +107,12 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<PCTimeLimitDbContext>();
     await db.Database.MigrateAsync();
+    var startupLogger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+    var backfilled = await AllowedUsageScheduleService.BackfillLegacySchedulesAsync(db, startupLogger, CancellationToken.None);
+    if (backfilled > 0)
+    {
+        startupLogger.LogInformation("Backfilled {BackfilledCount} legacy allowed-usage schedules into normalized rows.", backfilled);
+    }
 }
 
 app.UseForwardedHeaders(new ForwardedHeadersOptions
@@ -364,6 +370,7 @@ child.MapPost("/register", async (
 
     var computer = await dbContext.Computers
         .Include(x => x.DeviceCredential)
+        .Include(x => x.AllowedUsageRanges)
         .SingleOrDefaultAsync(x => x.ExternalId == computerId, cancellationToken);
 
     if (computer is null)
@@ -378,6 +385,7 @@ child.MapPost("/register", async (
             LastSeenUtc = now,
             IsOnline = true,
             DailyTimeLimitSeconds = (int)TimeSpan.FromHours(1).TotalSeconds,
+            AllowedUsageUpdatedAtUtc = now,
             AllowedUsageJson = string.Empty
         };
         dbContext.Computers.Add(computer);
@@ -416,7 +424,7 @@ child.MapPost("/register", async (
         Message = "Computer registered successfully.",
         DeviceToken = deviceToken,
         DailyLimit = TimeSpan.FromSeconds(computer.DailyTimeLimitSeconds),
-        AllowedUsageJson = computer.AllowedUsageJson
+        AllowedUsageSchedule = AllowedUsageScheduleService.GetScheduleForComputer(computer)
     });
 });
 
@@ -459,7 +467,7 @@ child.MapGet("/state", async (
         DailyLimit = TimeSpan.FromSeconds(authResult.Computer.DailyTimeLimitSeconds),
         PendingReset = authResult.Computer.PendingReset,
         PendingForceLockout = authResult.Computer.PendingForceLockout,
-        AllowedUsageJson = authResult.Computer.AllowedUsageJson
+        AllowedUsageSchedule = AllowedUsageScheduleService.GetScheduleForComputer(authResult.Computer)
     });
 });
 
@@ -514,6 +522,7 @@ adminGroup.MapGet("/computers", async (
 
     var computers = await dbContext.Computers
         .Include(x => x.AdminUser)
+        .Include(x => x.AllowedUsageRanges)
         .Where(x => x.AdminUserId == adminUserId.Value)
         .OrderBy(x => x.ComputerName)
         .ToListAsync(cancellationToken);
@@ -564,6 +573,7 @@ adminGroup.MapPut("/computers/{computerId}/allowed-usage", async (
     SetAllowedUsageRequest request,
     ClaimsPrincipal user,
     PCTimeLimitDbContext dbContext,
+    ILogger<Program> logger,
     CancellationToken cancellationToken) =>
 {
     var adminUserId = GetAdminUserId(user);
@@ -572,7 +582,9 @@ adminGroup.MapPut("/computers/{computerId}/allowed-usage", async (
         return Results.Unauthorized();
     }
 
-    var computer = await dbContext.Computers.SingleOrDefaultAsync(
+    var computer = await dbContext.Computers
+        .Include(x => x.AllowedUsageRanges)
+        .SingleOrDefaultAsync(
         x => x.ExternalId == computerId && x.AdminUserId == adminUserId.Value,
         cancellationToken);
 
@@ -581,10 +593,84 @@ adminGroup.MapPut("/computers/{computerId}/allowed-usage", async (
         return Results.NotFound();
     }
 
-    computer.AllowedUsageJson = request.AllowedUsageJson ?? string.Empty;
-    await dbContext.SaveChangesAsync(cancellationToken);
+    var (canonicalSchedule, errors) = AllowedUsageScheduleService.ValidateAndCanonicalize(request.Ranges);
+    if (canonicalSchedule is null)
+    {
+        logger.LogWarning(
+            "Allowed usage update rejected. AdminUserId: {AdminUserId}, ComputerId: {ComputerId}, Errors: {Errors}",
+            adminUserId.Value,
+            computerId,
+            string.Join("; ", errors));
 
-    return Results.Ok(new QueueActionResponse { Success = true, Message = "Allowed usage updated." });
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["ranges"] = errors.ToArray()
+        });
+    }
+
+    var currentSchedule = AllowedUsageScheduleService.GetScheduleForComputer(computer);
+    if (AllowedUsageScheduleService.AreEquivalent(currentSchedule, canonicalSchedule))
+    {
+        return Results.Ok(new AllowedUsageScheduleResponse
+        {
+            Success = true,
+            Message = "Allowed usage unchanged.",
+            Schedule = currentSchedule
+        });
+    }
+
+    canonicalSchedule.UpdatedAtUtc = DateTime.UtcNow;
+
+    await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+    await AllowedUsageScheduleService.ApplyScheduleAsync(dbContext, computer, canonicalSchedule, cancellationToken);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    await transaction.CommitAsync(cancellationToken);
+
+    logger.LogInformation(
+        "Allowed usage updated. AdminUserId: {AdminUserId}, ComputerId: {ComputerId}, BeforeCount: {BeforeCount}, AfterCount: {AfterCount}",
+        adminUserId.Value,
+        computerId,
+        currentSchedule.Ranges.Count,
+        canonicalSchedule.Ranges.Count);
+
+    return Results.Ok(new AllowedUsageScheduleResponse
+    {
+        Success = true,
+        Message = "Allowed usage updated.",
+        Schedule = canonicalSchedule
+    });
+});
+
+adminGroup.MapGet("/computers/{computerId}/allowed-usage", async (
+    string computerId,
+    ClaimsPrincipal user,
+    PCTimeLimitDbContext dbContext,
+    CancellationToken cancellationToken) =>
+{
+    var adminUserId = GetAdminUserId(user);
+    if (adminUserId is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    var computer = await dbContext.Computers
+        .Include(x => x.AllowedUsageRanges)
+        .SingleOrDefaultAsync(
+            x => x.ExternalId == computerId && x.AdminUserId == adminUserId.Value,
+            cancellationToken);
+
+    if (computer is null)
+    {
+        return Results.NotFound();
+    }
+
+    var schedule = AllowedUsageScheduleService.GetScheduleForComputer(computer);
+    return Results.Ok(new AllowedUsageScheduleResponse
+    {
+        Success = true,
+        Message = "Allowed usage loaded.",
+        Schedule = schedule
+    });
 });
 
 adminGroup.MapPost("/computers/{computerId}/reset", async (
@@ -750,6 +836,7 @@ ops.MapGet("/computers", async (
 
     var computers = await dbContext.Computers
         .Include(x => x.AdminUser)
+        .Include(x => x.AllowedUsageRanges)
         .OrderBy(x => x.ComputerName)
         .ToListAsync(cancellationToken);
 

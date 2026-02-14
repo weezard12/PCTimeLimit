@@ -18,7 +18,12 @@ public static class MappingExtensions
             IsOnline = computer.IsOnline,
             PendingReset = computer.PendingReset,
             PendingForceLockout = computer.PendingForceLockout,
-            AllowedUsageJson = computer.AllowedUsageJson
+            AllowedUsageSchedule = computer.ToAllowedUsageScheduleDto()
         };
+    }
+
+    public static AllowedUsageScheduleDto ToAllowedUsageScheduleDto(this Computer computer)
+    {
+        return AllowedUsageScheduleService.GetScheduleForComputer(computer);
     }
 }

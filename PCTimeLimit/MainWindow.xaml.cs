@@ -1,5 +1,4 @@
 using System;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
@@ -15,24 +14,23 @@ using Microsoft.Win32;
 using System.Text;
 using System.Threading.Tasks;
 using PCTimeLimitShared.Contracts;
+using PCTimeLimitShared.Scheduling;
 
 namespace PCTimeLimit;
 
-public partial class MainWindow : Window, INotifyPropertyChanged
+public partial class MainWindow : Window
 {
-	private DispatcherTimer _uiTimer;
-	private TimeManager _timeManager;
-	private UsageTracker _usageTracker;
+	private DispatcherTimer _uiTimer = null!;
+	private TimeManager _timeManager = null!;
+	private UsageTracker _usageTracker = null!;
 	private string? _adminCode;
 	private string? _computerId;
 	private ClientService? _clientService;
 	private TimeSpan? _serverDailyLimitPending;
-	private string? _serverAllowedUsagePending;
+	private AllowedUsageScheduleDto? _serverAllowedUsagePending;
 	private DispatcherTimer? _syncTimer;
 	private bool _syncInProgress;
 	private DispatcherTimer? _reconnectTimer;
-
-	public event PropertyChangedEventHandler? PropertyChanged;
 
 	TimesUpWindow? timesUpWindow;
 
@@ -90,7 +88,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 				_serverDailyLimitPending = null;
 			}
 			// If server provided allowed usage during registration, apply it now
-			if (!string.IsNullOrWhiteSpace(_serverAllowedUsagePending))
+			if (_serverAllowedUsagePending is not null)
 			{
 				_timeManager.UpdateAllowedUsage(_serverAllowedUsagePending);
 				_serverAllowedUsagePending = null;
@@ -151,7 +149,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 					
 					// Capture server-provided settings (applied after TimeManager is created)
 					_serverDailyLimitPending = regResult.DailyLimit;
-					_serverAllowedUsagePending = regResult.AllowedUsageJson;
+					_serverAllowedUsagePending = regResult.AllowedUsageSchedule;
 					
 					// Start periodic status updates
 					StartStatusUpdates();
@@ -214,11 +212,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 			await SaveClientSettingsAsync(new ClientSettings { ComputerId = computerId });
 			// If server provided a daily limit, apply now if _timeManager exists
 			_serverDailyLimitPending = reg.DailyLimit;
+			_serverAllowedUsagePending = reg.AllowedUsageSchedule;
 			if (_timeManager != null && _serverDailyLimitPending.HasValue)
 			{
 				_timeManager.UpdateDailyLimit(_serverDailyLimitPending.Value);
 				_serverDailyLimitPending = null;
 			}
+            if (_timeManager != null && _serverAllowedUsagePending is not null)
+            {
+                _timeManager.UpdateAllowedUsage(_serverAllowedUsagePending);
+                _serverAllowedUsagePending = null;
+            }
 			// Start background tasks now that we're connected
 			StartStatusUpdates();
 			StartSyncTimer();
@@ -310,7 +314,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 				}
 				await Task.Delay(100);
 			}
-			catch (Exception ex) when (attempt < maxRetries - 1)
+			catch (Exception) when (attempt < maxRetries - 1)
 			{
 				attempt++;
 				await Task.Delay(100);
@@ -458,10 +462,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     _timeManager.UpdateDailyLimit(state.DailyLimit.Value);
                     UpdateUi();
                 }
-                if (!string.IsNullOrWhiteSpace(state.AllowedUsageJson))
-                {
-                    _timeManager.UpdateAllowedUsage(state.AllowedUsageJson);
-                }
+                _timeManager.UpdateAllowedUsage(state.AllowedUsageSchedule);
                 if (state.PendingReset)
                 {
                     // Reset remaining to the daily limit immediately
@@ -533,7 +534,7 @@ public sealed class ClientService
     {
         public bool Success { get; set; }
         public TimeSpan DailyLimit { get; set; }
-        public string? AllowedUsageJson { get; set; }
+        public AllowedUsageScheduleDto AllowedUsageSchedule { get; set; } = new();
     }
 
     public async Task<RegisterComputerResult> RegisterComputerAsync(string computerId, string computerName, string adminCode)
@@ -551,7 +552,7 @@ public sealed class ClientService
             {
                 Success = true,
                 DailyLimit = existingState.DailyLimit ?? TimeSpan.Zero,
-                AllowedUsageJson = existingState.AllowedUsageJson
+                AllowedUsageSchedule = existingState.AllowedUsageSchedule
             };
         }
 
@@ -577,7 +578,7 @@ public sealed class ClientService
             {
                 Success = true,
                 DailyLimit = response.DailyLimit,
-                AllowedUsageJson = response.AllowedUsageJson
+                AllowedUsageSchedule = response.AllowedUsageSchedule
             };
         }
         catch
@@ -607,7 +608,7 @@ public sealed class ClientService
         public TimeSpan? DailyLimit { get; set; }
         public bool PendingReset { get; set; }
         public bool PendingForceLockout { get; set; }
-        public string? AllowedUsageJson { get; set; }
+        public AllowedUsageScheduleDto AllowedUsageSchedule { get; set; } = new();
     }
 
     public async Task<ComputerState?> GetComputerStateAsync(string adminCode, string computerId)
@@ -660,7 +661,7 @@ public sealed class ClientService
             DailyLimit = response.DailyLimit,
             PendingReset = response.PendingReset,
             PendingForceLockout = response.PendingForceLockout,
-            AllowedUsageJson = response.AllowedUsageJson
+            AllowedUsageSchedule = response.AllowedUsageSchedule
         };
     }
 
@@ -898,7 +899,9 @@ public sealed class AppSettings
 	public string Password { get; set; } = "";
 	public DateTime DateUtc { get; set; } = DateTime.Today;
 	public TimeSpan RemainingForDate { get; set; } = TimeSpan.FromHours(1);
-    public string AllowedUsageJson { get; set; } = "";
+    public AllowedUsageScheduleDto AllowedUsageSchedule { get; set; } = new();
+    // Transitional fallback so old local settings files can be upgraded in place.
+    public string AllowedUsageJson { get; set; } = string.Empty;
 }
 
 public sealed class UsageTracker
@@ -998,7 +1001,7 @@ public sealed class UsageData
 public sealed class TimeManager
 {
 	private AppSettings _settings = new();
-    private Dictionary<DayOfWeek, List<(TimeSpan start, TimeSpan end)>> _allowedWindows = new();
+    private AllowedUsageScheduleDto _allowedUsageSchedule = new();
 
 	public TimeSpan DailyLimit => _settings.DailyLimit;
 
@@ -1029,8 +1032,16 @@ public sealed class TimeManager
 		}
 
 		EnsureDate();
-        // Initialize allowed windows cache from stored JSON
-        ApplyAllowedUsageJson(_settings.AllowedUsageJson);
+        if ((_settings.AllowedUsageSchedule?.Ranges?.Count ?? 0) == 0 && !string.IsNullOrWhiteSpace(_settings.AllowedUsageJson))
+        {
+            var migrated = ParseLegacyAllowedUsageJson(_settings.AllowedUsageJson);
+            _settings.AllowedUsageSchedule = migrated;
+            _settings.AllowedUsageJson = string.Empty;
+            Save();
+        }
+
+        _settings.AllowedUsageSchedule ??= new AllowedUsageScheduleDto();
+        ApplyAllowedUsageSchedule(_settings.AllowedUsageSchedule);
 	}
 
 	public void Save()
@@ -1055,43 +1066,109 @@ public sealed class TimeManager
 		Save();
 	}
 
-    public void UpdateAllowedUsage(string? allowedUsageJson)
+    public void UpdateAllowedUsage(AllowedUsageScheduleDto? schedule)
     {
-        _settings.AllowedUsageJson = allowedUsageJson ?? string.Empty;
-        ApplyAllowedUsageJson(_settings.AllowedUsageJson);
+        var canonical = AllowedUsageScheduleUtility.CreateCanonicalSchedule(schedule?.Ranges, schedule?.UpdatedAtUtc);
+        if (AreSchedulesEqual(_settings.AllowedUsageSchedule, canonical))
+        {
+            ApplyAllowedUsageSchedule(canonical);
+            return;
+        }
+
+        _settings.AllowedUsageSchedule = canonical;
+        ApplyAllowedUsageSchedule(canonical);
         Save();
     }
 
-    private void ApplyAllowedUsageJson(string? json)
+    private void ApplyAllowedUsageSchedule(AllowedUsageScheduleDto? schedule)
     {
-        _allowedWindows = new Dictionary<DayOfWeek, List<(TimeSpan start, TimeSpan end)>>();
-        if (string.IsNullOrWhiteSpace(json)) return;
+        _allowedUsageSchedule = AllowedUsageScheduleUtility.CreateCanonicalSchedule(
+            schedule?.Ranges,
+            schedule?.UpdatedAtUtc);
+    }
+
+    private static bool AreSchedulesEqual(AllowedUsageScheduleDto? left, AllowedUsageScheduleDto? right)
+    {
+        var l = AllowedUsageScheduleUtility.CreateCanonicalSchedule(left?.Ranges, left?.UpdatedAtUtc);
+        var r = AllowedUsageScheduleUtility.CreateCanonicalSchedule(right?.Ranges, right?.UpdatedAtUtc);
+
+        if (l.UpdatedAtUtc != r.UpdatedAtUtc || l.Ranges.Count != r.Ranges.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < l.Ranges.Count; i++)
+        {
+            var a = l.Ranges[i];
+            var b = r.Ranges[i];
+            if (a.Day != b.Day || a.StartMinute != b.StartMinute || a.EndMinute != b.EndMinute)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static AllowedUsageScheduleDto ParseLegacyAllowedUsageJson(string legacyJson)
+    {
+        var ranges = new List<AllowedUsageRangeDto>();
+        if (string.IsNullOrWhiteSpace(legacyJson))
+        {
+            return AllowedUsageScheduleUtility.CreateCanonicalSchedule(ranges);
+        }
+
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            foreach (var kv in new[] { ("monday", DayOfWeek.Monday), ("tuesday", DayOfWeek.Tuesday), ("wednesday", DayOfWeek.Wednesday), ("thursday", DayOfWeek.Thursday), ("friday", DayOfWeek.Friday), ("saturday", DayOfWeek.Saturday), ("sunday", DayOfWeek.Sunday) })
+            using var document = JsonDocument.Parse(legacyJson);
+            var root = document.RootElement;
+
+            foreach (var (name, day) in new[]
             {
-                if (!root.TryGetProperty(kv.Item1, out var arr) || arr.ValueKind != JsonValueKind.Array) continue;
-                var ranges = new List<(TimeSpan, TimeSpan)>();
-                foreach (var el in arr.EnumerateArray())
+                ("sunday", Weekday.Sunday),
+                ("monday", Weekday.Monday),
+                ("tuesday", Weekday.Tuesday),
+                ("wednesday", Weekday.Wednesday),
+                ("thursday", Weekday.Thursday),
+                ("friday", Weekday.Friday),
+                ("saturday", Weekday.Saturday)
+            })
+            {
+                if (!root.TryGetProperty(name, out var dayRanges) || dayRanges.ValueKind != JsonValueKind.Array)
                 {
-                    if (el.ValueKind != JsonValueKind.Object) continue;
-                    if (!el.TryGetProperty("start", out var sEl) || !el.TryGetProperty("end", out var eEl)) continue;
-                    var sStr = sEl.GetString();
-                    var eStr = eEl.GetString();
-                    if (TimeSpan.TryParse(sStr, out var sTs) && TimeSpan.TryParse(eStr, out var eTs))
-                    {
-                        ranges.Add((sTs, eTs));
-                    }
+                    continue;
                 }
-                if (ranges.Count > 0)
+
+                foreach (var item in dayRanges.EnumerateArray())
                 {
-                    _allowedWindows[kv.Item2] = ranges;
+                    if (item.ValueKind != JsonValueKind.Object
+                        || !item.TryGetProperty("start", out var startProp)
+                        || !item.TryGetProperty("end", out var endProp))
+                    {
+                        continue;
+                    }
+
+                    if (!TimeSpan.TryParse(startProp.GetString(), out var start)
+                        || !TimeSpan.TryParse(endProp.GetString(), out var end))
+                    {
+                        continue;
+                    }
+
+                    ranges.Add(new AllowedUsageRangeDto
+                    {
+                        Day = day,
+                        StartMinute = (int)start.TotalMinutes,
+                        EndMinute = (int)end.TotalMinutes
+                    });
                 }
             }
         }
-        catch { }
+        catch
+        {
+            // Keep default empty schedule if legacy JSON is malformed.
+        }
+
+        return AllowedUsageScheduleUtility.CreateCanonicalSchedule(ranges);
     }
 
 	public string GetPassword()
@@ -1176,23 +1253,7 @@ public sealed class TimeManager
 
     public bool IsWithinAllowedWindow(DateTime localNow)
     {
-        if (_allowedWindows == null || _allowedWindows.Count == 0) return false;
-        var dow = localNow.DayOfWeek;
-        if (!_allowedWindows.TryGetValue(dow, out var ranges) || ranges == null || ranges.Count == 0) return false;
-        var timeOfDay = localNow.TimeOfDay;
-        foreach (var (start, end) in ranges)
-        {
-            if (start <= end)
-            {
-                if (timeOfDay >= start && timeOfDay <= end) return true;
-            }
-            else
-            {
-                // Overnight window, e.g., 22:00-02:00
-                if (timeOfDay >= start || timeOfDay <= end) return true;
-            }
-        }
-        return false;
+        return AllowedUsageScheduleUtility.IsInAllowedWindow(_allowedUsageSchedule, localNow);
     }
 
     [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();

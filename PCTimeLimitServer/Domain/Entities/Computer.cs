@@ -13,7 +13,10 @@ public sealed class Computer
     public bool IsOnline { get; set; }
     public bool PendingReset { get; set; }
     public bool PendingForceLockout { get; set; }
+    public DateTime AllowedUsageUpdatedAtUtc { get; set; } = DateTime.UtcNow;
+    // Transitional fallback for migration from legacy JSON schedule storage.
     public string AllowedUsageJson { get; set; } = string.Empty;
 
     public DeviceCredential? DeviceCredential { get; set; }
+    public List<ComputerAllowedUsageRange> AllowedUsageRanges { get; set; } = new();
 }

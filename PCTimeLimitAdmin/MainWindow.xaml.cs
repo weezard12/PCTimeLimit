@@ -1,7 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using PCTimeLimitAdmin.Services;
-using PCTimeLimitShared;
 using PCTimeLimitShared.Contracts;
 
 namespace PCTimeLimitAdmin;
@@ -161,9 +160,7 @@ public partial class MainWindow : Window
         UpdateTimeLimitButton.IsEnabled = true;
         ResetTimerButton.IsEnabled = true;
         SetZeroButton.IsEnabled = true;
-
-        AdvancedScheduleCheckBox.IsChecked = !string.IsNullOrWhiteSpace(_selectedComputer.AllowedUsageJson);
-        UpdateAllowedUsageButton.IsEnabled = AdvancedScheduleCheckBox.IsChecked == true;
+        UpdateAllowedUsageButton.IsEnabled = true;
     }
 
     private async void UpdateTimeLimitButton_Click(object sender, RoutedEventArgs e)
@@ -206,59 +203,48 @@ public partial class MainWindow : Window
             return;
         }
 
-        var editor = new AllowedUsageWindow(_selectedComputer.AllowedUsageJson);
-        editor.Owner = this;
-        var ok = editor.ShowDialog();
-        if (ok != true)
-        {
-            return;
-        }
-
-        var json = editor.ResultJson ?? string.Empty;
-        var response = await _apiClient.SetComputerAllowedUsageAsync(_selectedComputer.ComputerId, json);
-
-        if (response?.Success != true)
-        {
-            StatusText.Text = response?.Message ?? "Failed to update allowed usage.";
-            return;
-        }
-
-        _selectedComputer.AllowedUsageJson = json;
-        ComputersDataGrid.Items.Refresh();
-        StatusText.Text = $"Updated allowed usage for {_selectedComputer.ComputerName}.";
-    }
-
-    private async void AdvancedScheduleCheckBox_Checked(object sender, RoutedEventArgs e)
-    {
-        UpdateAllowedUsageButton.IsEnabled = true;
-
-        if (_selectedComputer is null || _apiClient?.IsConnected != true)
-        {
-            return;
-        }
-
-        if (!string.IsNullOrWhiteSpace(_selectedComputer.AllowedUsageJson))
-        {
-            return;
-        }
-
-        _selectedComputer.AllowedUsageJson = Consts.AllowedUsageJsonExample;
-        await _apiClient.SetComputerAllowedUsageAsync(_selectedComputer.ComputerId, _selectedComputer.AllowedUsageJson);
-        ComputersDataGrid.Items.Refresh();
-    }
-
-    private async void AdvancedScheduleCheckBox_Unchecked(object sender, RoutedEventArgs e)
-    {
         UpdateAllowedUsageButton.IsEnabled = false;
-
-        if (_selectedComputer is null || _apiClient?.IsConnected != true)
+        try
         {
-            return;
-        }
+            var current = await _apiClient.GetComputerAllowedUsageAsync(_selectedComputer.ComputerId);
+            if (current?.Success != true)
+            {
+                MessageBox.Show(
+                    current?.Message ?? "Failed to load current schedule from server.",
+                    "Schedule Load Failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
 
-        _selectedComputer.AllowedUsageJson = string.Empty;
-        await _apiClient.SetComputerAllowedUsageAsync(_selectedComputer.ComputerId, string.Empty);
-        ComputersDataGrid.Items.Refresh();
+            var editor = new AllowedUsageWindow(current.Schedule);
+            editor.Owner = this;
+            var ok = editor.ShowDialog();
+            if (ok != true)
+            {
+                return;
+            }
+
+            var response = await _apiClient.SetComputerAllowedUsageAsync(_selectedComputer.ComputerId, editor.ResultRanges);
+
+            if (response?.Success != true)
+            {
+                MessageBox.Show(
+                    response?.Message ?? "Failed to update allowed usage.",
+                    "Schedule Save Failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+
+            _selectedComputer.AllowedUsageSchedule = response.Schedule;
+            ComputersDataGrid.Items.Refresh();
+            StatusText.Text = $"Updated allowed usage schedule for {_selectedComputer.ComputerName}.";
+        }
+        finally
+        {
+            UpdateAllowedUsageButton.IsEnabled = _selectedComputer is not null;
+        }
     }
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
