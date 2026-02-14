@@ -2,7 +2,9 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
@@ -10,11 +12,9 @@ using System.Windows.Threading;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Win32;
-using System.Net.Sockets;
-using System.Net;
 using System.Text;
 using System.Threading.Tasks;
-using static PCTimeLimitShared.Consts;
+using PCTimeLimitShared.Contracts;
 
 namespace PCTimeLimit;
 
@@ -487,243 +487,121 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 	private async Task CheckAndHandleFirewallAsync()
 	{
-		try
-		{
-			// Check if the port is blocked by firewall
-			if (FirewallHelper.IsPortBlocked(ServerPort))
-			{
-				var result = MessageBox.Show(
-					$"Windows Firewall may be blocking communication on port {ServerPort}.\n\n" +
-					"Would you like to add a firewall rule to allow this application?\n\n" +
-					"This will require administrator privileges.",
-					"Firewall Configuration",
-					MessageBoxButton.YesNo,
-					MessageBoxImage.Question);
-
-				if (result == MessageBoxResult.Yes)
-				{
-					var success = await FirewallHelper.AddFirewallRuleAsync(
-						ServerPort,
-						"PCTimeLimit Client",
-						"TCP",
-						"OUT");
-
-					if (success)
-					{
-						MessageBox.Show(
-							"Firewall rule added successfully. The application can now communicate with the server.",
-							"Firewall Configuration",
-							MessageBoxButton.OK,
-							MessageBoxImage.Information);
-					}
-					else
-					{
-						MessageBox.Show(
-							"Failed to add firewall rule. You may need to manually configure Windows Firewall.\n\n" +
-							"The application will continue in offline mode.",
-							"Firewall Configuration Failed",
-							MessageBoxButton.OK,
-							MessageBoxImage.Warning);
-					}
-				}
-			}
-		}
-		catch
-		{
-			// If we can't check firewall status, proceed anyway
-		}
+		await Task.CompletedTask;
 	}
 }
 
 public sealed class ClientService
 {
-    private TcpClient? _client;
-    private NetworkStream? _stream;
-    private readonly string _serverAddress = ServerIP;
-    private readonly int _serverPort = ServerPort;
-    
-    public bool IsConnected => _client?.Connected == true;
-    
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private readonly HttpClient _httpClient;
+    private readonly string _apiBaseUrl;
+    private string? _deviceToken;
+
+    public ClientService()
+    {
+        _apiBaseUrl = ClientApiConfig.GetApiBaseUrl();
+        _httpClient = new HttpClient
+        {
+            BaseAddress = new Uri(_apiBaseUrl.TrimEnd('/') + "/"),
+            Timeout = TimeSpan.FromSeconds(5)
+        };
+    }
+
+    public bool IsConnected { get; private set; }
+
     public async Task<bool> ConnectAsync()
     {
         try
         {
-            _client = new TcpClient();
-            await _client.ConnectAsync(_serverAddress, _serverPort);
-            _stream = _client.GetStream();
-            return true;
+            using var response = await _httpClient.GetAsync("health/live");
+            IsConnected = response.IsSuccessStatusCode;
+            return IsConnected;
         }
         catch
         {
+            IsConnected = false;
             return false;
         }
     }
-    
-	public sealed class RegisterComputerResult
+
+    public sealed class RegisterComputerResult
     {
         public bool Success { get; set; }
         public TimeSpan DailyLimit { get; set; }
-			public string? AllowedUsageJson { get; set; }
+        public string? AllowedUsageJson { get; set; }
     }
 
     public async Task<RegisterComputerResult> RegisterComputerAsync(string computerId, string computerName, string adminCode)
     {
-        if (!IsConnected) return new RegisterComputerResult { Success = false, DailyLimit = TimeSpan.Zero };
-        
+        if (!IsConnected)
+        {
+            return new RegisterComputerResult { Success = false, DailyLimit = TimeSpan.Zero };
+        }
+
+        _deviceToken = await LoadDeviceTokenAsync(computerId);
+        var existingState = await GetComputerStateInternalAsync();
+        if (existingState is not null)
+        {
+            return new RegisterComputerResult
+            {
+                Success = true,
+                DailyLimit = existingState.DailyLimit ?? TimeSpan.Zero,
+                AllowedUsageJson = existingState.AllowedUsageJson
+            };
+        }
+
         try
         {
-            var request = new
+            var request = new RegisterChildRequest
             {
-                Type = 4, // RegisterComputer
-                Data = new
-                {
-                    ComputerId = computerId,
-                    ComputerName = computerName,
-                    AdminUsername = string.Empty,
-                    AdminCode = adminCode
-                }
+                ComputerId = computerId,
+                ComputerName = computerName,
+                AdminCode = adminCode
             };
-            
-            var json = JsonSerializer.Serialize(request);
-            var data = Encoding.UTF8.GetBytes(json);
-            await _stream!.WriteAsync(data, 0, data.Length);
-            
-            // Read response
-            var buffer = new byte[8024];
-            var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
-            var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-            
-				// Expected response schema from server:
-				// { Type, Success, Data: { Success, Message, Computer: { DailyTimeLimit: "hh:mm:ss", AllowedUsageJson: "{...}", ... } } }
-            try
-            {
-                using var doc = JsonDocument.Parse(response);
-                var root = doc.RootElement;
-                var success = root.TryGetProperty("Success", out var topSuccess) && topSuccess.GetBoolean();
-				TimeSpan limit = TimeSpan.Zero;
-				string? allowed = null;
-                if (root.TryGetProperty("Data", out var dataEl))
-                {
-                    if (dataEl.ValueKind == JsonValueKind.Object)
-                    {
-                        if (dataEl.TryGetProperty("Computer", out var compEl))
-                        {
-                            if (compEl.TryGetProperty("DailyTimeLimit", out var limitEl))
-                            {
-                                // TimeSpan serialized as string "hh:mm:ss"
-                                var s = limitEl.GetString();
-                                if (!string.IsNullOrWhiteSpace(s))
-                                {
-                                    TimeSpan.TryParse(s, out limit);
-                                }
-                            }
-							if (compEl.TryGetProperty("AllowedUsageJson", out var auEl))
-							{
-								allowed = auEl.GetString();
-							}
-                        }
-                    }
-                }
-				return new RegisterComputerResult { Success = success, DailyLimit = limit, AllowedUsageJson = allowed };
-            }
-            catch
+
+            var response = await SendAsync<RegisterChildRequest, RegisterChildResponse>(HttpMethod.Post, "api/v1/child/register", request, includeDeviceAuth: false);
+            if (response is null || !response.Success || string.IsNullOrWhiteSpace(response.DeviceToken))
             {
                 return new RegisterComputerResult { Success = false, DailyLimit = TimeSpan.Zero };
             }
+
+            _deviceToken = response.DeviceToken;
+            await SaveDeviceTokenAsync(computerId, response.DeviceToken);
+
+            return new RegisterComputerResult
+            {
+                Success = true,
+                DailyLimit = response.DailyLimit,
+                AllowedUsageJson = response.AllowedUsageJson
+            };
         }
         catch
         {
             return new RegisterComputerResult { Success = false, DailyLimit = TimeSpan.Zero };
         }
     }
-    
+
     public async Task<bool> UpdateStatusAsync(string computerId, bool isOnline)
     {
-        if (!IsConnected) return false;
-        
-        try
-        {
-            var request = new
-            {
-                Type = 5, // UpdateComputerStatus
-                Data = new
-                {
-                    ComputerId = computerId,
-                    IsOnline = isOnline
-                }
-            };
-            
-            var json = JsonSerializer.Serialize(request);
-            var data = Encoding.UTF8.GetBytes(json);
-            await _stream!.WriteAsync(data, 0, data.Length);
-            
-            return true;
-        }
-        catch
+        if (!IsConnected || string.IsNullOrWhiteSpace(_deviceToken))
         {
             return false;
         }
+
+        var response = await SendAsync<UpdateStatusRequest, QueueActionResponse>(
+            HttpMethod.Post,
+            "api/v1/child/status",
+            new UpdateStatusRequest { IsOnline = isOnline },
+            includeDeviceAuth: true);
+
+        return response?.Success == true;
     }
-    
-    public async Task<TimeSpan?> GetDailyLimitAsync(string adminCode, string computerId)
-    {
-        if (!IsConnected) return null;
-        try
-        {
-            var request = new
-            {
-                Type = 7, // GetComputersForAdmin
-                Data = new { AdminUsername = string.Empty, AdminCode = adminCode }
-            };
 
-            var json = JsonSerializer.Serialize(request);
-            var data = Encoding.UTF8.GetBytes(json);
-            await _stream!.WriteAsync(data, 0, data.Length);
-
-            var buffer = new byte[2048];
-            var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
-            if (bytesRead <= 0) return null;
-            var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-
-            using var doc = JsonDocument.Parse(response);
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("Success", out var ok) || !ok.GetBoolean()) return null;
-            if (!root.TryGetProperty("Data", out var dataEl)) return null;
-            if (dataEl.ValueKind != JsonValueKind.Object) return null;
-            if (!dataEl.TryGetProperty("Computers", out var compsEl)) return null;
-            if (compsEl.ValueKind != JsonValueKind.Array) return null;
-
-            foreach (var comp in compsEl.EnumerateArray())
-            {
-                var id = comp.TryGetProperty("ComputerId", out var idEl) ? idEl.GetString() : null;
-                if (!string.Equals(id, computerId, StringComparison.OrdinalIgnoreCase)) continue;
-
-                // DailyTimeLimit might be serialized as string or object; handle both
-                if (comp.TryGetProperty("DailyTimeLimit", out var limitEl))
-                {
-                    if (limitEl.ValueKind == JsonValueKind.String)
-                    {
-                        var s = limitEl.GetString();
-                        if (!string.IsNullOrWhiteSpace(s) && TimeSpan.TryParse(s, out var ts))
-                            return ts;
-                    }
-                    else if (limitEl.ValueKind == JsonValueKind.Number)
-                    {
-                        // If serialized as ticks or minutes, attempt ticks first
-                        if (limitEl.TryGetInt64(out var ticks))
-                            return TimeSpan.FromTicks(ticks);
-                    }
-                }
-            }
-
-            return null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-    
     public sealed class ComputerState
     {
         public TimeSpan? DailyLimit { get; set; }
@@ -734,140 +612,200 @@ public sealed class ClientService
 
     public async Task<ComputerState?> GetComputerStateAsync(string adminCode, string computerId)
     {
-        if (!IsConnected) return null;
-        try
+        if (string.IsNullOrWhiteSpace(_deviceToken))
         {
-            var request = new
-            {
-                Type = 7, // GetComputersForAdmin
-                Data = new { AdminUsername = string.Empty, AdminCode = adminCode }
-            };
-
-            var json = JsonSerializer.Serialize(request);
-            var data = Encoding.UTF8.GetBytes(json);
-            await _stream!.WriteAsync(data, 0, data.Length);
-
-            var buffer = new byte[12096];
-            var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
-            if (bytesRead <= 0) return null;
-            var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-
-            using var doc = JsonDocument.Parse(response);
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("Success", out var ok) || !ok.GetBoolean()) return null;
-            if (!root.TryGetProperty("Data", out var dataEl)) return null;
-            if (dataEl.ValueKind != JsonValueKind.Object) return null;
-            if (!dataEl.TryGetProperty("Computers", out var compsEl)) return null;
-            if (compsEl.ValueKind != JsonValueKind.Array) return null;
-
-            foreach (var comp in compsEl.EnumerateArray())
-            {
-                var id = comp.TryGetProperty("ComputerId", out var idEl) ? idEl.GetString() : null;
-                if (!string.Equals(id, computerId, StringComparison.OrdinalIgnoreCase)) continue;
-
-                var state = new ComputerState();
-                if (comp.TryGetProperty("DailyTimeLimit", out var limitEl))
-                {
-                    if (limitEl.ValueKind == JsonValueKind.String)
-                    {
-                        var s = limitEl.GetString();
-                        if (!string.IsNullOrWhiteSpace(s) && TimeSpan.TryParse(s, out var ts))
-                            state.DailyLimit = ts;
-                    }
-                    else if (limitEl.ValueKind == JsonValueKind.Number && limitEl.TryGetInt64(out var ticks))
-                    {
-                        state.DailyLimit = TimeSpan.FromTicks(ticks);
-                    }
-                }
-                if (comp.TryGetProperty("AllowedUsageJson", out var auEl) && auEl.ValueKind == JsonValueKind.String)
-                {
-                    state.AllowedUsageJson = auEl.GetString();
-                }
-                if (comp.TryGetProperty("PendingReset", out var prEl) && prEl.ValueKind == JsonValueKind.True)
-                {
-                    state.PendingReset = true;
-                }
-                else if (comp.TryGetProperty("PendingReset", out prEl) && prEl.ValueKind == JsonValueKind.False)
-                {
-                    state.PendingReset = false;
-                }
-                if (comp.TryGetProperty("PendingForceLockout", out var pflEl) && pflEl.ValueKind == JsonValueKind.True)
-                {
-                    state.PendingForceLockout = true;
-                }
-                else if (comp.TryGetProperty("PendingForceLockout", out pflEl) && pflEl.ValueKind == JsonValueKind.False)
-                {
-                    state.PendingForceLockout = false;
-                }
-                return state;
-            }
-
-            return null;
+            _deviceToken = await LoadDeviceTokenAsync(computerId);
         }
-        catch
-        {
-            return null;
-        }
+
+        return await GetComputerStateInternalAsync();
     }
 
     public async Task<bool> AcknowledgeResetAsync(string computerId)
     {
-        if (!IsConnected) return false;
-        try
-        {
-            var request = new
-            {
-                Type = 9, // AcknowledgeReset
-                Data = new { ComputerId = computerId }
-            };
-            var json = JsonSerializer.Serialize(request);
-            var data = Encoding.UTF8.GetBytes(json);
-            await _stream!.WriteAsync(data, 0, data.Length);
-
-            // best-effort; no need to block on response, but try to read small
-            var buffer = new byte[256];
-            var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
-            return bytesRead > 0;
-        }
-        catch
+        if (!IsConnected || string.IsNullOrWhiteSpace(_deviceToken))
         {
             return false;
         }
+
+        var response = await SendAsync<object, QueueActionResponse>(HttpMethod.Post, "api/v1/child/ack-reset", null, includeDeviceAuth: true);
+        return response?.Success == true;
     }
 
     public async Task<bool> AcknowledgeForceLockoutAsync(string computerId)
     {
-        if (!IsConnected) return false;
-        try
-        {
-            var request = new
-            {
-                Type = 11, // AcknowledgeForceLockout
-                Data = new { ComputerId = computerId }
-            };
-            var json = JsonSerializer.Serialize(request);
-            var data = Encoding.UTF8.GetBytes(json);
-            await _stream!.WriteAsync(data, 0, data.Length);
-
-            var buffer = new byte[256];
-            var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
-            return bytesRead > 0;
-        }
-        catch
+        if (!IsConnected || string.IsNullOrWhiteSpace(_deviceToken))
         {
             return false;
         }
+
+        var response = await SendAsync<object, QueueActionResponse>(HttpMethod.Post, "api/v1/child/ack-force-lockout", null, includeDeviceAuth: true);
+        return response?.Success == true;
     }
-    
+
+    private async Task<ComputerState?> GetComputerStateInternalAsync()
+    {
+        if (!IsConnected || string.IsNullOrWhiteSpace(_deviceToken))
+        {
+            return null;
+        }
+
+        var response = await SendAsync<object, ComputerStateResponse>(HttpMethod.Get, "api/v1/child/state", null, includeDeviceAuth: true);
+        if (response?.Success != true)
+        {
+            return null;
+        }
+
+        return new ComputerState
+        {
+            DailyLimit = response.DailyLimit,
+            PendingReset = response.PendingReset,
+            PendingForceLockout = response.PendingForceLockout,
+            AllowedUsageJson = response.AllowedUsageJson
+        };
+    }
+
+    private async Task<TResponse?> SendAsync<TRequest, TResponse>(HttpMethod method, string url, TRequest? payload, bool includeDeviceAuth)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(method, url);
+            if (payload is not null)
+            {
+                var json = JsonSerializer.Serialize(payload, JsonOptions);
+                request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            }
+
+            if (includeDeviceAuth && !string.IsNullOrWhiteSpace(_deviceToken))
+            {
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deviceToken);
+            }
+
+            using var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return default;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<TResponse>(stream, JsonOptions);
+        }
+        catch
+        {
+            return default;
+        }
+    }
+
+    private static async Task SaveDeviceTokenAsync(string computerId, string token)
+    {
+        try
+        {
+            AppStorage.EnsureFolder();
+            var encrypted = ProtectedData.Protect(Encoding.UTF8.GetBytes(token), null, DataProtectionScope.CurrentUser);
+            var payload = new DeviceTokenRecord
+            {
+                ComputerId = computerId,
+                TokenProtected = Convert.ToBase64String(encrypted)
+            };
+            var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(AppStorage.DeviceTokenFilePath, json);
+        }
+        catch
+        {
+            // best effort
+        }
+    }
+
+    private static async Task<string?> LoadDeviceTokenAsync(string computerId)
+    {
+        try
+        {
+            if (!File.Exists(AppStorage.DeviceTokenFilePath))
+            {
+                return null;
+            }
+
+            var json = await File.ReadAllTextAsync(AppStorage.DeviceTokenFilePath);
+            var payload = JsonSerializer.Deserialize<DeviceTokenRecord>(json);
+            if (payload is null || !string.Equals(payload.ComputerId, computerId, StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(payload.TokenProtected))
+            {
+                return null;
+            }
+
+            var bytes = Convert.FromBase64String(payload.TokenProtected);
+            var plain = ProtectedData.Unprotect(bytes, null, DataProtectionScope.CurrentUser);
+            return Encoding.UTF8.GetString(plain);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public void Disconnect()
     {
-        _stream?.Close();
-        _client?.Close();
-        _stream = null;
-        _client = null;
+        _httpClient.Dispose();
+        IsConnected = false;
+        _deviceToken = null;
     }
 }
 
+public sealed class DeviceTokenRecord
+{
+    public string ComputerId { get; set; } = string.Empty;
+    public string TokenProtected { get; set; } = string.Empty;
+}
+
+public static class ClientApiConfig
+{
+    private const string DefaultApiBaseUrl = "https://pctimelimit.example";
+
+    public static string GetApiBaseUrl()
+    {
+        var env = Environment.GetEnvironmentVariable("PCTIMELIMIT_API_BASEURL");
+        if (TryNormalize(env, out var fromEnv))
+        {
+            return fromEnv;
+        }
+
+        var path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+        if (File.Exists(path))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(path));
+                if (doc.RootElement.TryGetProperty("Api", out var api)
+                    && api.TryGetProperty("BaseUrl", out var baseUrl)
+                    && TryNormalize(baseUrl.GetString(), out var fromFile))
+                {
+                    return fromFile;
+                }
+            }
+            catch
+            {
+                // use default
+            }
+        }
+
+        return DefaultApiBaseUrl;
+    }
+
+    private static bool TryNormalize(string? value, out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(value) || !Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        normalized = uri.ToString().TrimEnd('/');
+        return true;
+    }
+}
 public sealed class AppStorage
 {
 	public static string AppFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PCTimeLimit");
@@ -875,6 +813,7 @@ public sealed class AppStorage
 	public static string UsageFilePath => Path.Combine(AppFolder, "usage.json");
 	public static string ClientFilePath => Path.Combine(AppFolder, "client.json");
 	public static string AdminCodeFilePath => Path.Combine(AppFolder, "admin_code.txt");
+	public static string DeviceTokenFilePath => Path.Combine(AppFolder, "device_token.json");
 
 	public static void EnsureFolder()
 	{

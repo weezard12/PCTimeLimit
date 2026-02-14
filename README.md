@@ -1,132 +1,98 @@
-# PC Time Limit - Multi-Computer Admin Control System
+# PC Time Limit - .NET 10 HTTPS Architecture
 
-This system allows admin accounts to control time limits for multiple computers from a central server. Each admin can manage multiple child computers, setting daily time limits and monitoring their status.
+This repository now uses a hard-cutover architecture:
 
-## System Architecture
+- `PCTimeLimitServer`: ASP.NET Core API (`net10.0`) over HTTPS
+- `PCTimeLimitAdmin`: WPF admin client (`net10.0-windows`) using typed `HttpClient`
+- `PCTimeLimit`: WPF child client (`net10.0-windows`) using typed `HttpClient`
+- `PCTimeLimitShared`: shared API contracts and constants
+- `PCTimeLimitOpsCli`: command-line ops tool for server maintenance
 
-- **PCTimeLimitServer**: Central server managing admin accounts and computer registrations
-- **PCTimeLimitAdmin**: Admin client for managing multiple computers
-- **PCTimeLimit**: Child app that runs on controlled computers
+Legacy raw TCP communication is removed.
 
-## Features
+## Security Model
 
-- **Admin Account Management**: Create and manage admin accounts
-- **Computer Registration**: Child computers register with admin accounts
-- **Centralized Control**: Admins can set time limits for multiple computers
-- **Real-time Status**: Monitor which computers are online/offline
-- **Secure Authentication**: Admin credentials required for computer registration
+- Passwords are hashed with `PasswordHasher<TUser>`.
+- Admin sessions use short JWT access tokens + rotating refresh tokens.
+- Child client registers once with Admin Code and then uses a persisted device token.
+- Ops endpoints require `X-Ops-Key`.
+- HTTPS is required in production (Nginx TLS termination on `443`).
 
-## Setup Instructions
+## Local Development
 
-### 1. Start the Server
+1. Configure server secrets in `PCTimeLimitServer/appsettings.Development.json`.
+2. Start server:
 
 ```bash
 cd PCTimeLimitServer
 dotnet run
 ```
 
-The server will start on port 8888 and display available console commands.
+3. Start admin app:
 
-### 2. Create Admin Accounts
-
-Use the server console to create admin accounts:
-
-```
-create-admin <username> <password>
+```bash
+cd PCTimeLimitAdmin
+dotnet run
 ```
 
-Or use the admin client to create accounts through the UI.
+4. Start child app:
 
-### 3. Run Child Apps on Computers
-
-On each computer you want to control:
-
-1. Run the PCTimeLimit app
-2. Enter admin username and password when prompted
-3. The computer will automatically register with the server
-4. The app will start enforcing time limits
-
-### 4. Manage Computers from Admin Client
-
-1. Run PCTimeLimitAdmin
-2. Login with admin credentials
-3. Connect to the server
-4. View all computers under your control
-5. Set daily time limits for each computer
-
-## Console Commands
-
-- `help` - Show available commands
-- `status` - Show server status and statistics
-- `list-users` - List all registered users (admins marked with [ADMIN])
-- `list-computers` - Show computer statistics
-- `clear-user-data` - Clear all user accounts (use with caution)
-- `quit` or `exit` - Stop the server
-
-## Message Protocol
-
-The system uses a TCP-based message protocol with the following message types:
-
-- `CreateAccount` (1) - Create new user account
-- `Login` (2) - Authenticate user
-- `Heartbeat` (3) - Connection health check
-- `RegisterComputer` (4) - Register computer with admin
-- `UpdateComputerStatus` (5) - Update computer online/offline status
-- `SetComputerTimeLimit` (6) - Set daily time limit for computer
-- `SetComputerAllowedUsage` (12) - Set JSON allowed-usage windows per weekday for a computer
-- `GetComputersForAdmin` (7) - Get all computers for an admin
-
-## File Structure
-
-```
-PCTimeLimit/
-├── PCTimeLimitServer/          # Central server
-├── PCTimeLimitAdmin/           # Admin management client
-└── PCTimeLimit/                # Child app for controlled computers
+```bash
+cd PCTimeLimit
+dotnet run
 ```
 
-## Data Storage
+## Production Deployment (Ubuntu + Docker + Nginx)
 
-- **Accounts**: Stored in `%APPDATA%\PC Time Limit Server\accounts.json`
-- **Computers**: Stored in `%APPDATA%\PC Time Limit Server\computers.json`
-- **Child App Settings**: Stored in `%APPDATA%\PCTimeLimit\`
-  - Includes `AllowedUsageJson` used to skip decrementing during allowed hours
+1. Ensure DNS points your domain to the Ubuntu host.
+2. Copy `.env.example` to `.env` and set secure values.
+3. Place certificates on host via Certbot (`/etc/letsencrypt`).
+4. Build and run:
 
-## Security Notes
+```bash
+cd deploy
+docker compose --env-file ../.env up -d --build
+```
 
-- Passwords are stored in plain text (not recommended for production)
-- No encryption of network communication
-- Admin accounts have full control over their registered computers
-- Computers can only be managed by their assigned admin
+5. Verify health:
 
-## Troubleshooting
+- `https://<your-domain>/health/live`
+- `https://<your-domain>/health/ready`
 
-### Server Connection Issues
-- Ensure the server is running on port 8888
-- Check firewall settings
-- Verify network connectivity
+## Ops CLI
 
-### Computer Registration Issues
-- Check admin credentials
-- Ensure server is accessible from the child computer
-- Verify computer ID generation
+Set:
 
-### Time Limit Issues
-- Check if the child app is running
-- Verify time limit settings in the admin client
-- Check server logs for errors
+- `PCTIMELIMIT_OPS_BASEURL`
+- `PCTIMELIMIT_OPS_KEY`
 
-## Development
+Then run:
 
-To modify the system:
+```bash
+dotnet run --project PCTimeLimitOpsCli -- status
+dotnet run --project PCTimeLimitOpsCli -- create-admin parent1 StrongPassword123
+dotnet run --project PCTimeLimitOpsCli -- list-users
+dotnet run --project PCTimeLimitOpsCli -- list-computers
+```
 
-1. **Add new message types**: Update `MessageProtocol.cs` and server handlers
-2. **Enhance security**: Implement password hashing and network encryption
-3. **Add features**: Extend the admin interface for additional controls
-4. **Improve monitoring**: Add logging and analytics capabilities
+## Publish Script
 
-## License
+Use:
 
-This project is provided as-is for educational and development purposes.
+```bat
+publish-all.bat
+```
 
+It publishes:
 
+- Child app
+- Admin app
+- Ops CLI
+- Server API artifacts
+- MSI package
+- Optional Docker image build (if Docker is available)
+
+## Notes
+
+- Fresh-start migration policy is active: old `accounts.json`/`computers.json` are not imported.
+- Both clients must be updated together with the new server release (hard cutover).

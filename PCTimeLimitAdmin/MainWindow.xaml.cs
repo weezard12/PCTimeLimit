@@ -1,512 +1,343 @@
 using System.Windows;
-using PCTimeLimitAdmin.Services;
-using System.Collections.Generic;
-using System.Linq;
 using System.Windows.Controls;
-using System;
+using PCTimeLimitAdmin.Services;
+using PCTimeLimitShared;
+using PCTimeLimitShared.Contracts;
 
 namespace PCTimeLimitAdmin;
 
 public partial class MainWindow : Window
 {
-    private TcpClientService? _tcpClient;
+    private TcpClientService? _apiClient;
     private string? _loggedInUsername;
-    private List<ComputerInfo> _computers = new();
-    private ComputerInfo? _selectedComputer;
-    
+    private List<ComputerDto> _computers = new();
+    private ComputerDto? _selectedComputer;
+
     public MainWindow()
     {
         InitializeComponent();
         Loaded += MainWindow_Loaded;
     }
-    
+
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        // Show login window first
+        ShowLogin();
+
+        if (!string.IsNullOrWhiteSpace(_loggedInUsername))
+        {
+            UpdateConnectionStatus(false, "Ready to connect");
+            StatusText.Text = "Login successful. Click Connect to load computers.";
+        }
+
+        await Task.CompletedTask;
+    }
+
+    private void ShowLogin()
+    {
         var loginWindow = new LoginWindow();
         var result = loginWindow.ShowDialog();
-        
-        if (result == true)
+
+        if (result != true)
         {
-            _loggedInUsername = loginWindow.LoggedInUsername;
-            UserInfoTextBlock.Text = $"Logged in as: {_loggedInUsername}";
-            // If the account was just created and server provided an AdminCode, display it
-            if (!string.IsNullOrWhiteSpace(loginWindow.CreatedAdminCode))
-            {
-                AdminCodeTextBlock.Text = $"Your Admin Code: {loginWindow.CreatedAdminCode}";
-                AdminCodeTextBlock.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                AdminCodeTextBlock.Text = string.Empty;
-                AdminCodeTextBlock.Visibility = Visibility.Collapsed;
-            }
-            UpdateConnectionStatus(false, "Ready to connect");
-            
-            // Check if user is admin
-            if (await CheckIfAdminAsync(_loggedInUsername))
-            {
-                StatusText.Text = "Admin account detected. You can manage computers.";
-            }
-            else
-            {
-                StatusText.Text = "Regular user account. Limited functionality available.";
-            }
+            Application.Current.Shutdown();
+            return;
+        }
+
+        _loggedInUsername = loginWindow.LoggedInUsername;
+        UserInfoTextBlock.Text = $"Logged in as: {_loggedInUsername}";
+
+        if (!string.IsNullOrWhiteSpace(loginWindow.CreatedAdminCode))
+        {
+            AdminCodeTextBlock.Text = $"Your Admin Code: {loginWindow.CreatedAdminCode}";
+            AdminCodeTextBlock.Visibility = Visibility.Visible;
         }
         else
         {
-            // User cancelled login, close the application
-            Application.Current.Shutdown();
+            AdminCodeTextBlock.Text = string.Empty;
+            AdminCodeTextBlock.Visibility = Visibility.Collapsed;
         }
     }
-    
+
     private async void ConnectButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_tcpClient?.IsConnected == true)
+        if (_apiClient?.IsConnected == true)
         {
-            // Disconnect
-            _tcpClient.Disconnect();
-            _tcpClient = null;
-            UpdateConnectionStatus(false, "Disconnected");
-            ConnectButton.Content = "Connect";
-            ComputersDataGrid.ItemsSource = null;
-            _computers.Clear();
+            Disconnect();
+            return;
         }
-        else
+
+        ConnectButton.Content = "Connecting...";
+        ConnectButton.IsEnabled = false;
+
+        try
         {
-            // Connect
-            ConnectButton.Content = "Connecting...";
-            ConnectButton.IsEnabled = false;
-            
-            try
+            _apiClient?.Dispose();
+            _apiClient = new TcpClientService();
+
+            var connected = await _apiClient.ConnectAsync();
+            if (!connected)
             {
-                _tcpClient = new TcpClientService();
-                var connected = await _tcpClient.ConnectAsync();
-                
-                if (connected)
-                {
-                    UpdateConnectionStatus(true, "Connected to server");
-                    ConnectButton.Content = "Disconnect";
-                    
-                    // Send heartbeat to test connection
-                    var response = await _tcpClient.SendHeartbeatAsync();
-                    if (response?.Success == true)
-                    {
-                        UpdateConnectionStatus(true, "Connected and responding");
-                        
-                        // Load computers for this admin
-                        await LoadComputersAsync();
-                    }
-                    else
-                    {
-                        UpdateConnectionStatus(false, "Connected but not responding");
-                    }
-                }
-                else
-                {
-                    UpdateConnectionStatus(false, "Failed to connect");
-                    ConnectButton.Content = "Connect";
-                }
-            }
-            catch (Exception ex)
-            {
-                UpdateConnectionStatus(false, $"Connection error: {ex.Message}");
+                UpdateConnectionStatus(false, "Unable to establish session");
                 ConnectButton.Content = "Connect";
+                return;
             }
-            finally
+
+            var heartbeat = await _apiClient.SendHeartbeatAsync();
+            if (!heartbeat)
             {
-                ConnectButton.IsEnabled = true;
+                UpdateConnectionStatus(false, "Server did not respond");
+                ConnectButton.Content = "Connect";
+                return;
             }
-        }
-    }
-    
-    private async Task<bool> CheckIfAdminAsync(string username)
-    {
-        if (_tcpClient?.IsConnected != true) return false;
-        
-        try
-        {
-            // For now, we'll assume all users are admins
-            // In a real implementation, you'd check the user's role
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-    
-    private async Task LoadComputersAsync()
-    {
-        if (_tcpClient?.IsConnected != true || string.IsNullOrEmpty(_loggedInUsername)) return;
-        
-        try
-        {
-            StatusText.Text = "Loading computers...";
-            
-            var request = new
-            {
-                Type = 7, // GetComputersForAdmin
-                Data = new
-                {
-                    AdminUsername = _loggedInUsername
-                }
-            };
-            
-            var response = await _tcpClient.SendMessageAsync(request);
-            if (response?.Success == true && response.Data != null)
-            {
-                // Data shape: { Success: true, Computers: [...] }
-                try
-                {
-                    if (response.Data is System.Text.Json.JsonElement dataEl)
-                    {
-                        if (dataEl.ValueKind == System.Text.Json.JsonValueKind.Object &&
-                            dataEl.TryGetProperty("Computers", out var compsEl))
-                        {
-                            var computers = System.Text.Json.JsonSerializer.Deserialize<List<ComputerInfo>>(compsEl.GetRawText());
-                            if (computers != null)
-                            {
-                                _computers = computers;
-                                ComputersDataGrid.ItemsSource = _computers;
-                                ComputersDataGrid.Items.Refresh();
-                                StatusText.Text = $"Loaded {_computers.Count} computers";
-                                return;
-                            }
-                        }
-                    }
-                    // Fallback: try direct list if server schema differs
-                    var fallbackJson = response.Data.ToString();
-                    var fallback = System.Text.Json.JsonSerializer.Deserialize<List<ComputerInfo>>(fallbackJson);
-                    if (fallback != null)
-                    {
-                        _computers = fallback;
-                        ComputersDataGrid.ItemsSource = _computers;
-                        ComputersDataGrid.Items.Refresh();
-                        StatusText.Text = $"Loaded {_computers.Count} computers";
-                        return;
-                    }
-                    StatusText.Text = "No computers found in response.";
-                }
-                catch (Exception ex)
-                {
-                    StatusText.Text = $"Failed to parse computers: {ex.Message}";
-                }
-            }
-            else
-            {
-                StatusText.Text = "Failed to load computers";
-            }
+
+            UpdateConnectionStatus(true, "Connected");
+            ConnectButton.Content = "Disconnect";
+            await LoadComputersAsync();
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"Error loading computers: {ex.Message}";
+            UpdateConnectionStatus(false, $"Connection error: {ex.Message}");
+            ConnectButton.Content = "Connect";
+        }
+        finally
+        {
+            ConnectButton.IsEnabled = true;
         }
     }
-    
+
+    private void Disconnect()
+    {
+        _apiClient?.Dispose();
+        _apiClient = null;
+        _selectedComputer = null;
+        _computers.Clear();
+        ComputersDataGrid.ItemsSource = null;
+        UpdateConnectionStatus(false, "Disconnected");
+        ConnectButton.Content = "Connect";
+        StatusText.Text = "Disconnected.";
+    }
+
+    private async Task LoadComputersAsync()
+    {
+        if (_apiClient?.IsConnected != true)
+        {
+            return;
+        }
+
+        StatusText.Text = "Loading computers...";
+
+        var response = await _apiClient.GetComputersForAdminAsync();
+        if (response?.Success != true)
+        {
+            StatusText.Text = string.IsNullOrWhiteSpace(response?.Message)
+                ? "Failed to load computers."
+                : response!.Message;
+            return;
+        }
+
+        _computers = response.Computers;
+        ComputersDataGrid.ItemsSource = _computers;
+        ComputersDataGrid.Items.Refresh();
+        StatusText.Text = $"Loaded {_computers.Count} computers";
+    }
+
     private void ComputersDataGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        _selectedComputer = ComputersDataGrid.SelectedItem as ComputerInfo;
-        if (_selectedComputer != null)
-        {
-            SelectedComputerText.Text = _selectedComputer.ComputerName;
-            
-            // Parse current time limit
-            var timeLimit = _selectedComputer.DailyTimeLimit;
-            HoursTextBox.Text = ((int)timeLimit.TotalHours).ToString();
-            MinutesTextBox.Text = timeLimit.Minutes.ToString();
-            
-            UpdateTimeLimitButton.IsEnabled = true;
-            ResetTimerButton.IsEnabled = true;
-            SetZeroButton.IsEnabled = true;
-            AdvancedScheduleCheckBox.IsChecked = !string.IsNullOrWhiteSpace(_selectedComputer.AllowedUsageJson);
-            UpdateAllowedUsageButton.IsEnabled = AdvancedScheduleCheckBox.IsChecked == true;
-        }
-        else
+        _selectedComputer = ComputersDataGrid.SelectedItem as ComputerDto;
+        if (_selectedComputer is null)
         {
             SelectedComputerText.Text = "None";
             UpdateTimeLimitButton.IsEnabled = false;
             ResetTimerButton.IsEnabled = false;
             SetZeroButton.IsEnabled = false;
             UpdateAllowedUsageButton.IsEnabled = false;
+            return;
         }
+
+        SelectedComputerText.Text = _selectedComputer.ComputerName;
+        HoursTextBox.Text = ((int)_selectedComputer.DailyTimeLimit.TotalHours).ToString();
+        MinutesTextBox.Text = _selectedComputer.DailyTimeLimit.Minutes.ToString();
+
+        UpdateTimeLimitButton.IsEnabled = true;
+        ResetTimerButton.IsEnabled = true;
+        SetZeroButton.IsEnabled = true;
+
+        AdvancedScheduleCheckBox.IsChecked = !string.IsNullOrWhiteSpace(_selectedComputer.AllowedUsageJson);
+        UpdateAllowedUsageButton.IsEnabled = AdvancedScheduleCheckBox.IsChecked == true;
     }
-    
+
     private async void UpdateTimeLimitButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedComputer == null || _tcpClient?.IsConnected != true) return;
-        
-        try
+        if (_selectedComputer is null || _apiClient?.IsConnected != true)
         {
-            if (!int.TryParse(HoursTextBox.Text, out var hours) || hours < 0)
-            {
-                MessageBox.Show("Please enter a valid number of hours (0 or greater).", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-            
-            if (!int.TryParse(MinutesTextBox.Text, out var minutes) || minutes < 0 || minutes > 59)
-            {
-                MessageBox.Show("Please enter a valid number of minutes (0-59).", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-            
-            var timeLimit = TimeSpan.FromHours(hours) + TimeSpan.FromMinutes(minutes);
-            
-            var request = new
-            {
-                Type = 6, // SetComputerTimeLimit
-                Data = new
-                {
-                    ComputerId = _selectedComputer.ComputerId,
-                    DailyTimeLimit = timeLimit,
-                    AdminUsername = _loggedInUsername
-                }
-            };
-            
-            var response = await _tcpClient.SendMessageAsync(request);
-            if (response?.Success == true)
-            {
-                // Update local data
-                _selectedComputer.DailyTimeLimit = timeLimit;
-                ComputersDataGrid.Items.Refresh();
-                
-                StatusText.Text = $"Updated time limit for {_selectedComputer.ComputerName} to {timeLimit}";
-                MessageBox.Show($"Time limit updated successfully for {_selectedComputer.ComputerName}.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            else
-            {
-                StatusText.Text = $"Failed to update time limit: {response?.ErrorMessage}";
-                MessageBox.Show($"Failed to update time limit: {response?.ErrorMessage}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
+            return;
         }
-        catch (Exception ex)
+
+        if (!int.TryParse(HoursTextBox.Text, out var hours) || hours < 0)
         {
-            StatusText.Text = $"Error updating time limit: {ex.Message}";
-            MessageBox.Show($"Error updating time limit: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show("Please enter valid hours (0+).", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
         }
+
+        if (!int.TryParse(MinutesTextBox.Text, out var minutes) || minutes < 0 || minutes > 59)
+        {
+            MessageBox.Show("Please enter valid minutes (0-59).", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var timeLimit = TimeSpan.FromHours(hours) + TimeSpan.FromMinutes(minutes);
+        var response = await _apiClient.SetComputerTimeLimitAsync(_selectedComputer.ComputerId, timeLimit);
+
+        if (response?.Success != true)
+        {
+            MessageBox.Show(response?.Message ?? "Failed to update time limit.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        _selectedComputer.DailyTimeLimit = timeLimit;
+        ComputersDataGrid.Items.Refresh();
+        StatusText.Text = $"Updated time limit for {_selectedComputer.ComputerName}.";
     }
 
     private async void UpdateAllowedUsageButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedComputer == null) return;
+        if (_selectedComputer is null || _apiClient?.IsConnected != true)
+        {
+            return;
+        }
+
         var editor = new AllowedUsageWindow(_selectedComputer.AllowedUsageJson);
         editor.Owner = this;
         var ok = editor.ShowDialog();
-        if (ok != true) return;
-        var json = editor.ResultJson ?? "";
-        if (_tcpClient?.IsConnected != true) return;
-        try
+        if (ok != true)
         {
-            var request = new
-            {
-                Type = 12, // SetComputerAllowedUsage
-                Data = new
-                {
-                    ComputerId = _selectedComputer.ComputerId,
-                    AllowedUsageJson = json,
-                    AdminUsername = _loggedInUsername
-                }
-            };
+            return;
+        }
 
-            var response = await _tcpClient.SendMessageAsync(request);
-            if (response?.Success == true)
-            {
-                _selectedComputer.AllowedUsageJson = json;
-                ComputersDataGrid.Items.Refresh();
-                StatusText.Text = $"Updated allowed usage for {_selectedComputer.ComputerName}.";
-            }
-            else
-            {
-                StatusText.Text = $"Failed to update allowed usage.";
-            }
-        }
-        catch (Exception ex)
+        var json = editor.ResultJson ?? string.Empty;
+        var response = await _apiClient.SetComputerAllowedUsageAsync(_selectedComputer.ComputerId, json);
+
+        if (response?.Success != true)
         {
-            StatusText.Text = $"Error updating allowed usage: {ex.Message}";
+            StatusText.Text = response?.Message ?? "Failed to update allowed usage.";
+            return;
         }
+
+        _selectedComputer.AllowedUsageJson = json;
+        ComputersDataGrid.Items.Refresh();
+        StatusText.Text = $"Updated allowed usage for {_selectedComputer.ComputerName}.";
     }
 
     private async void AdvancedScheduleCheckBox_Checked(object sender, RoutedEventArgs e)
     {
         UpdateAllowedUsageButton.IsEnabled = true;
-        // If enabling and no JSON exists yet, prefill default example
-        if (_selectedComputer != null && string.IsNullOrWhiteSpace(_selectedComputer.AllowedUsageJson))
+
+        if (_selectedComputer is null || _apiClient?.IsConnected != true)
         {
-            _selectedComputer.AllowedUsageJson = PCTimeLimitShared.Consts.AllowedUsageJsonExample;
-            if (_tcpClient?.IsConnected == true)
-            {
-                var request = new
-                {
-                    Type = 12,
-                    Data = new
-                    {
-                        ComputerId = _selectedComputer.ComputerId,
-                        AllowedUsageJson = _selectedComputer.AllowedUsageJson,
-                        AdminUsername = _loggedInUsername
-                    }
-                };
-                await _tcpClient.SendMessageAsync(request);
-            }
+            return;
         }
+
+        if (!string.IsNullOrWhiteSpace(_selectedComputer.AllowedUsageJson))
+        {
+            return;
+        }
+
+        _selectedComputer.AllowedUsageJson = Consts.AllowedUsageJsonExample;
+        await _apiClient.SetComputerAllowedUsageAsync(_selectedComputer.ComputerId, _selectedComputer.AllowedUsageJson);
+        ComputersDataGrid.Items.Refresh();
     }
 
     private async void AdvancedScheduleCheckBox_Unchecked(object sender, RoutedEventArgs e)
     {
         UpdateAllowedUsageButton.IsEnabled = false;
-        if (_selectedComputer == null) return;
-        _selectedComputer.AllowedUsageJson = string.Empty;
-        if (_tcpClient?.IsConnected == true)
+
+        if (_selectedComputer is null || _apiClient?.IsConnected != true)
         {
-            var request = new
-            {
-                Type = 12,
-                Data = new
-                {
-                    ComputerId = _selectedComputer.ComputerId,
-                    AllowedUsageJson = "",
-                    AdminUsername = _loggedInUsername
-                }
-            };
-            await _tcpClient.SendMessageAsync(request);
+            return;
         }
+
+        _selectedComputer.AllowedUsageJson = string.Empty;
+        await _apiClient.SetComputerAllowedUsageAsync(_selectedComputer.ComputerId, string.Empty);
+        ComputersDataGrid.Items.Refresh();
     }
-    
+
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
         await LoadComputersAsync();
     }
-    
-    private void LogoutButton_Click(object sender, RoutedEventArgs e)
-    {
-        _tcpClient?.Disconnect();
-        _tcpClient = null;
-        _loggedInUsername = null;
-        _computers.Clear();
-        ComputersDataGrid.ItemsSource = null;
-        
-        // Show login window again
-        var loginWindow = new LoginWindow();
-        var result = loginWindow.ShowDialog();
-        
-        if (result == true)
-        {
-            _loggedInUsername = loginWindow.LoggedInUsername;
-            UserInfoTextBlock.Text = $"Logged in as: {_loggedInUsername}";
-            // Show Admin Code if server returned it on login
-            if (!string.IsNullOrWhiteSpace(loginWindow.CreatedAdminCode))
-            {
-                AdminCodeTextBlock.Text = $"Your Admin Code: {loginWindow.CreatedAdminCode}";
-                AdminCodeTextBlock.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                AdminCodeTextBlock.Text = string.Empty;
-                AdminCodeTextBlock.Visibility = Visibility.Collapsed;
-            }
-            UpdateConnectionStatus(false, "Ready to connect");
-        }
-        else
-        {
-            Application.Current.Shutdown();
-        }
-    }
-    
-    private void UpdateConnectionStatus(bool isConnected, string status)
-    {
-        ConnectionStatusText.Text = status;
-        ConnectionStatusText.Foreground = isConnected ? System.Windows.Media.Brushes.Green : System.Windows.Media.Brushes.Gray;
-    }
 
     private async void ResetTimerButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedComputer == null || _tcpClient?.IsConnected != true || string.IsNullOrEmpty(_loggedInUsername)) return;
+        if (_selectedComputer is null || _apiClient?.IsConnected != true)
+        {
+            return;
+        }
+
+        ResetTimerButton.IsEnabled = false;
         try
         {
-            var request = new
-            {
-                Type = 8, // ResetComputerTimer
-                Data = new
-                {
-                    ComputerId = _selectedComputer.ComputerId,
-                    AdminUsername = _loggedInUsername
-                }
-            };
-
-            ResetTimerButton.IsEnabled = false;
-            var response = await _tcpClient.SendMessageAsync(request);
+            var response = await _apiClient.ResetComputerTimerAsync(_selectedComputer.ComputerId);
             if (response?.Success == true)
             {
                 StatusText.Text = $"Reset queued for {_selectedComputer.ComputerName}.";
-                MessageBox.Show($"Reset queued for {_selectedComputer.ComputerName}. If the PC is online, it will apply shortly.", "Reset Queued", MessageBoxButton.OK, MessageBoxImage.Information);
                 await LoadComputersAsync();
             }
             else
             {
-                StatusText.Text = $"Failed to queue reset: {response?.ErrorMessage}";
-                MessageBox.Show($"Failed to queue reset: {response?.ErrorMessage}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(response?.Message ?? "Failed to queue reset.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"Error sending reset: {ex.Message}";
-            MessageBox.Show($"Error sending reset: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
-            ResetTimerButton.IsEnabled = _selectedComputer != null;
+            ResetTimerButton.IsEnabled = _selectedComputer is not null;
         }
     }
 
     private async void SetZeroButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedComputer == null || _tcpClient?.IsConnected != true || string.IsNullOrEmpty(_loggedInUsername)) return;
+        if (_selectedComputer is null || _apiClient?.IsConnected != true)
+        {
+            return;
+        }
+
+        SetZeroButton.IsEnabled = false;
         try
         {
-            var request = new
-            {
-                Type = 10, // ForceLockout
-                Data = new
-                {
-                    ComputerId = _selectedComputer.ComputerId,
-                    AdminUsername = _loggedInUsername
-                }
-            };
-
-            SetZeroButton.IsEnabled = false;
-            var response = await _tcpClient.SendMessageAsync(request);
+            var response = await _apiClient.ForceLockoutAsync(_selectedComputer.ComputerId);
             if (response?.Success == true)
             {
-                StatusText.Text = $"Forced time's up for {_selectedComputer.ComputerName}.";
-                MessageBox.Show($"Time's up has been triggered for {_selectedComputer.ComputerName}. The daily limit remains unchanged.", "Force Lockout Queued", MessageBoxButton.OK, MessageBoxImage.Information);
+                StatusText.Text = $"Force lockout queued for {_selectedComputer.ComputerName}.";
                 await LoadComputersAsync();
             }
             else
             {
-                StatusText.Text = $"Failed to set time limit: {response?.ErrorMessage}";
-                MessageBox.Show($"Failed to set time limit: {response?.ErrorMessage}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(response?.Message ?? "Failed to queue force lockout.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"Error setting time limit: {ex.Message}";
-            MessageBox.Show($"Error setting time limit: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
-            SetZeroButton.IsEnabled = _selectedComputer != null;
+            SetZeroButton.IsEnabled = _selectedComputer is not null;
         }
     }
-}
 
-public class ComputerInfo
-{
-    public string ComputerId { get; set; } = "";
-    public string ComputerName { get; set; } = "";
-    public string AdminUsername { get; set; } = "";
-    public TimeSpan DailyTimeLimit { get; set; } = TimeSpan.FromHours(1);
-    public DateTime RegisteredAt { get; set; }
-    public DateTime LastSeen { get; set; }
-    public bool IsOnline { get; set; } = false;
-    public bool PendingReset { get; set; } = false;
-    public string? AllowedUsageJson { get; set; }
+    private async void LogoutButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_apiClient is not null)
+        {
+            await _apiClient.LogoutAsync();
+        }
+
+        Disconnect();
+        _loggedInUsername = null;
+        ShowLogin();
+        UpdateConnectionStatus(false, "Ready to connect");
+    }
+
+    private void UpdateConnectionStatus(bool isConnected, string status)
+    {
+        ConnectionStatusText.Text = status;
+        ConnectionStatusText.Foreground = isConnected
+            ? System.Windows.Media.Brushes.Green
+            : System.Windows.Media.Brushes.Gray;
+    }
 }

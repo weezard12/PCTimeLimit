@@ -1,25 +1,22 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-REM Always run relative to this script location
 pushd "%~dp0"
 
 echo ===========================
-echo Publishing all projects...
+echo Publishing all projects (.NET 10)...
 echo ===========================
 
-REM Define base output folder relative to this .bat file
 set "BASEDIR=%~dp0publish"
 set "LOGDIR=%BASEDIR%\logs"
 
-REM Ensure publish folder exists
 if not exist "%BASEDIR%" mkdir "%BASEDIR%"
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 
-REM Project paths
 set "CHILD_PROJ=%~dp0PCTimeLimit\PCTimeLimit.csproj"
 set "ADMIN_PROJ=%~dp0PCTimeLimitAdmin\PCTimeLimitAdmin.csproj"
 set "SERVER_PROJ=%~dp0PCTimeLimitServer\PCTimeLimitServer.csproj"
+set "OPSCLI_PROJ=%~dp0PCTimeLimitOpsCli\PCTimeLimitOpsCli.csproj"
 set "MSI_PROJ=%~dp0PCTimeLimitPackage\PCTimeLimitPackage.wixproj"
 
 REM Publish Child Client (Windows)
@@ -28,19 +25,14 @@ dotnet publish "%CHILD_PROJ%" -c Release -r win-x64 --self-contained true ^
  /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true ^
  -o "%BASEDIR%\PCTimeLimit"
 set "PUBLISH_EXIT=%errorlevel%"
-echo Child publish exit code: %PUBLISH_EXIT%
-if not "%PUBLISH_EXIT%"=="0" (
-    call :fail_exit "Failed to publish PCTimeLimit (child client)" "" %PUBLISH_EXIT%
-)
-echo Child publish finished.
+if not "%PUBLISH_EXIT%"=="0" call :fail_exit "Failed to publish PCTimeLimit (child client)" "" %PUBLISH_EXIT%
 
-REM Build MSI installer for child client (requires WiX build tools)
+REM Build MSI installer for child client
 set "MSI_LOG=%LOGDIR%\msi-build.log"
-echo Building PCTimeLimit MSI installer... (logging to %MSI_LOG%)
+echo Building PCTimeLimit MSI installer... (log: %MSI_LOG%)
 echo --- MSI build start --- > "%MSI_LOG%"
 dotnet build "%MSI_PROJ%" -c Release >> "%MSI_LOG%" 2>&1
 set "MSI_EXIT=%errorlevel%"
-echo MSI build exit code: %MSI_EXIT%
 if not "%MSI_EXIT%"=="0" (
     call :fail_exit "Failed to build MSI installer" "%MSI_LOG%" %MSI_EXIT%
 ) else (
@@ -49,11 +41,8 @@ if not "%MSI_EXIT%"=="0" (
     if exist "!MSI_SOURCE!" (
         copy /Y "!MSI_SOURCE!" "!MSI_TARGET!" >nul
         echo MSI copied to "!MSI_TARGET!"
-    ) else (
-        echo MSI build finished but file not found at "!MSI_SOURCE!"
     )
 )
-echo MSI build step finished.
 
 REM Publish Admin App (Windows)
 echo Publishing PCTimeLimitAdmin...
@@ -61,29 +50,37 @@ dotnet publish "%ADMIN_PROJ%" -c Release -r win-x64 --self-contained true ^
  /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true ^
  -o "%BASEDIR%\PCTimeLimitAdmin"
 set "ADMIN_EXIT=%errorlevel%"
-echo Admin publish exit code: %ADMIN_EXIT%
-if not "%ADMIN_EXIT%"=="0" (
-    call :fail_exit "Failed to publish PCTimeLimitAdmin" "" %ADMIN_EXIT%
-)
-echo Admin publish finished.
+if not "%ADMIN_EXIT%"=="0" call :fail_exit "Failed to publish PCTimeLimitAdmin" "" %ADMIN_EXIT%
 
-REM Publish Server (Linux Ubuntu)
-echo Publishing PCTimeLimitServer (Linux)...
-dotnet publish "%SERVER_PROJ%" -c Release -r linux-x64 --self-contained true ^
- /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true ^
- -o "%BASEDIR%\PCTimeLimitServer"
+REM Publish Ops CLI (cross-platform)
+echo Publishing PCTimeLimitOpsCli...
+dotnet publish "%OPSCLI_PROJ%" -c Release -o "%BASEDIR%\PCTimeLimitOpsCli"
+set "OPS_EXIT=%errorlevel%"
+if not "%OPS_EXIT%"=="0" call :fail_exit "Failed to publish PCTimeLimitOpsCli" "" %OPS_EXIT%
+
+REM Publish Server API binaries for diagnostics/fallback
+echo Publishing PCTimeLimitServer API binaries...
+dotnet publish "%SERVER_PROJ%" -c Release -o "%BASEDIR%\PCTimeLimitServerApi"
 set "SERVER_EXIT=%errorlevel%"
-echo Server publish exit code: %SERVER_EXIT%
-if not "%SERVER_EXIT%"=="0" (
-    call :fail_exit "Failed to publish PCTimeLimitServer (Linux)" "" %SERVER_EXIT%
+if not "%SERVER_EXIT%"=="0" call :fail_exit "Failed to publish PCTimeLimitServer API" "" %SERVER_EXIT%
+
+REM Optional Docker image build for production deployment
+where docker >nul 2>&1
+if "%errorlevel%"=="0" (
+    echo Building Docker images with deploy\docker-compose.yml...
+    docker compose -f "%~dp0deploy\docker-compose.yml" build
+    if not "%errorlevel%"=="0" (
+        echo WARNING: Docker image build failed. Check Docker environment and compose file.
+    )
+) else (
+    echo Docker not found. Skipping container build step.
 )
-echo Server publish finished.
 
 echo ===========================
-echo All projects published successfully!
+echo All publish steps completed.
 echo Output: %BASEDIR%
 echo ===========================
-pause
+
 popd
 endlocal
 goto :eof
@@ -103,8 +100,5 @@ if not "%FAIL_LOG%"=="" (
         echo Log file not found: "%FAIL_LOG%"
     )
 )
-echo.
-echo Press any key to exit...
-pause
 popd
 exit /b %FAIL_CODE%

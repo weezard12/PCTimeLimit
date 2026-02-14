@@ -80,7 +80,7 @@
                        HorizontalAlignment="Center"
                        Foreground="#666666"
                        Margin="0,5,0,0"/>
-            <TextBlock Text="Connecting to localhost:8888" 
+            <TextBlock Text="Server: https://pctimelimit.example" 
                        FontSize="12" 
                        HorizontalAlignment="Center"
                        Foreground="#999999"

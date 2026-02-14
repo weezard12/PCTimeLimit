@@ -2,16 +2,20 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
   </PropertyGroup>
 
-  <Import Project="..\PCTimeLinitShared\PCTimeLinitShared.projitems" Label="Shared" />
+  <ItemGroup>
+    <ProjectReference Include="..\PCTimeLimitShared\PCTimeLimitShared.csproj" />
+  </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="WindowsFirewallHelper" Version="2.2.0.86" />
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

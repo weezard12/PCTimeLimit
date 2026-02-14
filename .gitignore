@@ -235,6 +235,11 @@ ClientBin/
 *~
 *.dbmdl
 *.dbproj.schemaview
+
+# Local development SQLite artifacts
+PCTimeLimitServer/*.db
+PCTimeLimitServer/*.db-shm
+PCTimeLimitServer/*.db-wal
 *.jfm
 *.pfx
 *.publishsettings

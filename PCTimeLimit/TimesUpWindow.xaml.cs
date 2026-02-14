@@ -1,116 +1,132 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
-using WindowsInput;
 
-namespace PCTimeLimit
+namespace PCTimeLimit;
+
+public partial class TimesUpWindow : Window
 {
-    public partial class TimesUpWindow : Window
+    private bool _allowClose;
+
+    public TimesUpWindow()
     {
-        // for simulating inputs.
-        private InputSimulator sim = new InputSimulator();
+        InitializeComponent();
+        PreventClosing();
+        HookKeyboard();
+    }
 
-        // Flag to control whether closing should be prevented
-        private bool allowClose = false;
-
-        public TimesUpWindow()
+    private void PreventClosing()
+    {
+        Closing += (_, e) =>
         {
-            InitializeComponent();
-            PreventClosing();
-            HookKeyboard();
-        }
-
-        private void PreventClosing()
-        {
-            this.Closing += (s, e) =>
+            if (!_allowClose)
             {
-                // Only cancel if allowClose is false
-                if (!allowClose)
+                e.Cancel = true;
+            }
+        };
+
+        Loaded += (_, _) =>
+        {
+            Activate();
+            Focus();
+        };
+    }
+
+    public void ForceClose()
+    {
+        _allowClose = true;
+        Dispatcher.Invoke(Close);
+    }
+
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        ForceFocus();
+    }
+
+    private void ForceFocus()
+    {
+        Task.Run(() =>
+        {
+            while (!_allowClose)
+            {
+                Dispatcher.Invoke(() =>
                 {
-                    e.Cancel = true;
-                }
-            };
-            this.Loaded += (s, e) =>
-            {
-                this.Activate();
-                this.Focus();
-            };
-        }
+                    Topmost = true;
+                    Activate();
+                    Focus();
+                });
 
-        /// <summary>
-        /// Forces the window to close, bypassing any closing prevention mechanisms
-        /// </summary>
-        public void ForceClose()
+                Thread.Sleep(500);
+            }
+        });
+    }
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    private void HookKeyboard()
+    {
+        Task.Run(() =>
         {
-            // Set flag to allow closing
-            allowClose = true;
-
-            // Use Dispatcher to ensure we're on the UI thread
-            Dispatcher.Invoke(() =>
+            while (!_allowClose)
             {
-                this.Close();
-            });
-        }
-
-        private void Window_Loaded(object sender, RoutedEventArgs e)
-        {
-            ForceFocus();
-        }
-
-        private void ForceFocus()
-        {
-            Task.Run(() =>
-            {
-                while (true)
+                if ((GetAsyncKeyState(0x5B) & 0x8000) != 0 || (GetAsyncKeyState(0x5C) & 0x8000) != 0)
                 {
-                    Dispatcher.Invoke(() =>
-                    {
-                        this.Topmost = true;
-                        this.Activate();
-                        this.Focus();
-                    });
-                    Thread.Sleep(500);
+                    Dispatcher.Invoke(SendEscapeKey);
+                    Thread.Sleep(50);
                 }
-            });
-        }
 
-        // P/Invoke for global keyboard hook
-        [DllImport("user32.dll")]
-        private static extern short GetAsyncKeyState(int vKey);
+                Thread.Sleep(50);
+            }
+        });
+    }
 
-        // For canceling windows key
-        private void HookKeyboard()
+    private static void SendEscapeKey()
+    {
+        var inputDown = new INPUT
         {
-            Task.Run(() =>
+            type = 1,
+            U = new InputUnion
             {
-                while (!allowClose)
+                ki = new KEYBDINPUT
                 {
-                    // Check if the left or right Windows key is pressed
-                    if ((GetAsyncKeyState(0x5B) & 0x8000) != 0 || // Left Windows Key (VK_LWIN)
-                        (GetAsyncKeyState(0x5C) & 0x8000) != 0)   // Right Windows Key (VK_RWIN)
-                    {
-                        Dispatcher.Invoke(() => TypeWindowsText());
-                        Thread.Sleep(50); // Prevent spamming
-                    }
-                    Thread.Sleep(50); // Reduce CPU usage
+                    wVk = (ushort)KeyInterop.VirtualKeyFromKey(Key.Escape),
+                    dwFlags = 0
                 }
-            });
-        }
+            }
+        };
 
-        private void TypeWindowsText()
-        {
-            sim.Keyboard.KeyPress(WindowsInput.Native.VirtualKeyCode.ESCAPE); // Simulate typing "Windows"
-        }
+        var inputUp = inputDown;
+        inputUp.U.ki.dwFlags = 0x0002;
+
+        _ = SendInput(1, new[] { inputDown }, Marshal.SizeOf<INPUT>());
+        _ = SendInput(1, new[] { inputUp }, Marshal.SizeOf<INPUT>());
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint type;
+        public InputUnion U;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [FieldOffset(0)]
+        public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public nint dwExtraInfo;
     }
 }
